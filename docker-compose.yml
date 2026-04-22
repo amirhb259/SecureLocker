@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: securelocker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: securelocker
+      POSTGRES_USER: securelocker
+      POSTGRES_PASSWORD: securelocker
+    ports:
+      - "5432:5432"
+    volumes:
+      - securelocker-postgres:/var/lib/postgresql/data
+
+volumes:
+  securelocker-postgres:
