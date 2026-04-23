@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { clsx } from "clsx";
 
-type TextFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "onChange"> & {
+export type TextFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "onChange"> & {
   action?: ReactNode;
   error?: string;
   icon?: ReactNode;

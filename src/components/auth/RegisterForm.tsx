@@ -5,6 +5,7 @@ import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
 import { PasswordStrength } from "./PasswordStrength";
 import { PasswordToggle } from "./PasswordToggle";
 import { Button } from "../ui/Button";
+import { PasswordField } from "../ui/PasswordField";
 import { TextField } from "../ui/TextField";
 import { useFormField } from "../../hooks/useFormField";
 import { authApi } from "../../lib/authApi";
@@ -126,7 +127,7 @@ export function RegisterForm({ onSwitchMode, onVerificationRequired }: RegisterF
           value={email.value}
         />
 
-        <TextField
+        <PasswordField
           action={
             <PasswordToggle
               isVisible={passwordVisible}
@@ -142,13 +143,13 @@ export function RegisterForm({ onSwitchMode, onVerificationRequired }: RegisterF
           onChange={password.onChange}
           placeholder="Create password"
           touched={password.touched}
-          type={passwordVisible ? "text" : "password"}
           value={password.value}
+          visible={passwordVisible}
         />
 
         <PasswordStrength strength={passwordStrength} visible={password.value.length > 0} />
 
-        <TextField
+        <PasswordField
           action={
             <PasswordToggle
               isVisible={confirmPasswordVisible}
@@ -164,8 +165,8 @@ export function RegisterForm({ onSwitchMode, onVerificationRequired }: RegisterF
           onChange={confirmPassword.onChange}
           placeholder="Confirm password"
           touched={confirmPassword.touched}
-          type={confirmPasswordVisible ? "text" : "password"}
           value={confirmPassword.value}
+          visible={confirmPasswordVisible}
         />
       </div>
 

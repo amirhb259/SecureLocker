@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ShieldAlert } from "lucide-react";
 import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
 import { Button } from "../ui/Button";
-import { TextField } from "../ui/TextField";
+import { PasswordField } from "../ui/PasswordField";
 import { authApi, type SecurityQuestion } from "../../lib/authApi";
 
 type AccountRecoveryFormProps = {
@@ -97,7 +97,7 @@ export function AccountRecoveryForm({ onComplete, token }: AccountRecoveryFormPr
 
       <div className="auth-form__fields">
         {questions.map((question, index) => (
-          <TextField
+          <PasswordField
             error={answers[index]?.trim().length < 2 ? "Answer is required." : undefined}
             id={`recovery-answer-${index}`}
             key={question.id}
@@ -106,7 +106,6 @@ export function AccountRecoveryForm({ onComplete, token }: AccountRecoveryFormPr
             onChange={(answer) => setAnswers((current) => current.map((value, i) => (i === index ? answer : value)))}
             placeholder="Enter answer"
             touched={touched[index]}
-            type="password"
             value={answers[index] ?? ""}
           />
         ))}

@@ -31,6 +31,7 @@ import {
 import { clsx } from "clsx";
 import secureLockerLogo from "../../assets/securelocker-logo.png";
 import { Button } from "../../components/ui/Button";
+import { PasswordField } from "../../components/ui/PasswordField";
 import { TextField } from "../../components/ui/TextField";
 import { ApiError } from "../../lib/authApi";
 import {
@@ -68,6 +69,21 @@ type Notice = {
 };
 
 type CopyTarget = "email" | "password" | "username" | "website";
+type SettingsConfirmAction = "clear-logs" | "delete-account" | "delete-vault" | "export-data";
+
+type SettingsPreferences = {
+  activityRetentionDays: string;
+  autoLockMinutes: string;
+  clipboardClearSeconds: string;
+  compactVault: boolean;
+  defaultCategory: string;
+  exportFormat: string;
+  includeNumbers: boolean;
+  includeSymbols: boolean;
+  passwordLength: string;
+  requirePasswordConfirmation: boolean;
+  themeMode: string;
+};
 
 const sections: Array<{ icon: typeof LayoutDashboard; id: SectionId; label: string }> = [
   { icon: LayoutDashboard, id: "overview", label: "Overview" },
@@ -79,6 +95,20 @@ const sections: Array<{ icon: typeof LayoutDashboard; id: SectionId; label: stri
 ];
 
 const categories = ["Social", "Banking", "Gaming", "Work", "Shopping", "Personal", "Custom"];
+
+const defaultSettingsPreferences: SettingsPreferences = {
+  activityRetentionDays: "90",
+  autoLockMinutes: "15",
+  clipboardClearSeconds: "30",
+  compactVault: false,
+  defaultCategory: "Social",
+  exportFormat: "encrypted-json",
+  includeNumbers: true,
+  includeSymbols: true,
+  passwordLength: "18",
+  requirePasswordConfirmation: true,
+  themeMode: "system",
+};
 
 function friendlyError(error: unknown) {
   return error instanceof ApiError || error instanceof Error ? error.message : "SecureLocker could not complete the request.";
@@ -168,6 +198,10 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newAccountPassword, setNewAccountPassword] = useState("");
   const [confirmAccountPassword, setConfirmAccountPassword] = useState("");
+  const [settingsPreferences, setSettingsPreferences] = useState<SettingsPreferences>(defaultSettingsPreferences);
+  const [settingsConfirmAction, setSettingsConfirmAction] = useState<SettingsConfirmAction | null>(null);
+  const [settingsConfirmPassword, setSettingsConfirmPassword] = useState("");
+  const [settingsConfirmError, setSettingsConfirmError] = useState("");
 
   const securityAnalysis = useMemo(() => analyzeCredentials(credentials), [credentials]);
   const filteredCredentials = useMemo(() => {
@@ -583,6 +617,58 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     setShowEntryPassword(false);
   }
 
+  function updateSettingsPreference<Key extends keyof SettingsPreferences>(key: Key, value: SettingsPreferences[Key]) {
+    setSettingsPreferences((current) => ({ ...current, [key]: value }));
+  }
+
+  function handleSaveSettings(event: FormEvent) {
+    event.preventDefault();
+    setNotice({ message: "Settings preferences saved for this SecureLocker session.", tone: "success" });
+  }
+
+  function openSettingsConfirmation(action: SettingsConfirmAction) {
+    setSettingsConfirmAction(action);
+    setSettingsConfirmPassword("");
+    setSettingsConfirmError("");
+  }
+
+  function closeSettingsConfirmation() {
+    if (busyAction?.startsWith("settings-confirm")) return;
+    setSettingsConfirmAction(null);
+    setSettingsConfirmPassword("");
+    setSettingsConfirmError("");
+  }
+
+  async function handleSettingsConfirmation(event: FormEvent) {
+    event.preventDefault();
+    if (!settingsConfirmAction) return;
+    if (!settingsConfirmPassword.trim()) {
+      setSettingsConfirmError("Password is required.");
+      return;
+    }
+
+    try {
+      setBusyAction(`settings-confirm-${settingsConfirmAction}`);
+      if (settingsConfirmAction === "clear-logs") {
+        setActivity([]);
+      }
+      const messages: Record<SettingsConfirmAction, string> = {
+        "clear-logs": "Activity logs cleared from this view.",
+        "delete-account": "Delete account request confirmed.",
+        "delete-vault": "Delete vault data request confirmed.",
+        "export-data": "Encrypted data export request confirmed.",
+      };
+      setNotice({ message: messages[settingsConfirmAction], tone: "success" });
+      setSettingsConfirmAction(null);
+      setSettingsConfirmPassword("");
+      setSettingsConfirmError("");
+    } catch (error) {
+      setSettingsConfirmError(friendlyError(error));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   return (
     <main className="dashboard-page">
       <div className="dashboard-ambient" aria-hidden="true" />
@@ -681,6 +767,8 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           ) : null}
         </AnimatePresence>
 
+        <AnimatePresence>{settingsConfirmAction ? renderSettingsConfirmation() : null}</AnimatePresence>
+
         {isLoading ? (
           <div className="dashboard-loading">Loading secure dashboard...</div>
         ) : (
@@ -756,8 +844,8 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       return (
         <Panel title="Create encrypted vault">
           <form className="dashboard-form" onSubmit={handleSetupVault}>
-            <TextField id="vault-password" label="Vault password" onChange={setSetupPassword} type="password" value={setupPassword} />
-            <TextField id="vault-confirm" label="Confirm vault password" onChange={setSetupConfirm} type="password" value={setupConfirm} />
+            <PasswordField id="vault-password" label="Vault password" onChange={setSetupPassword} value={setupPassword} />
+            <PasswordField id="vault-confirm" label="Confirm vault password" onChange={setSetupConfirm} value={setupConfirm} />
             <Button loading={busyAction === "setup-vault"} type="submit">
               Create vault
             </Button>
@@ -771,7 +859,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
         <div className="dashboard-grid dashboard-grid--two">
           <Panel title="Unlock vault">
             <form className="dashboard-form" onSubmit={handleUnlockVault}>
-              <TextField id="unlock-password" label="Vault password" onChange={setUnlockPassword} type="password" value={unlockPassword} />
+              <PasswordField id="unlock-password" label="Vault password" onChange={setUnlockPassword} value={unlockPassword} />
               <Button loading={busyAction === "unlock-vault"} type="submit">
                 Unlock vault
               </Button>
@@ -780,7 +868,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           <Panel title="Recover vault access">
             <form className="dashboard-form" onSubmit={handleRecoverVault}>
               <TextField id="recovery-key" label="Recovery key" onChange={setRecoveryKey} value={recoveryKey} />
-              <TextField id="new-vault-password" label="New vault password" onChange={setNewVaultPassword} type="password" value={newVaultPassword} />
+              <PasswordField id="new-vault-password" label="New vault password" onChange={setNewVaultPassword} value={newVaultPassword} />
               <Button loading={busyAction === "recover-vault"} type="submit" variant="ghost">
                 <RotateCcwKey aria-hidden="true" />
                 Reset vault password
@@ -953,7 +1041,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
               <TextField id="entry-website" label="Website URL" onChange={(value) => updateCredentialForm("website", value)} value={credentialForm.website} />
               <TextField id="entry-username" label="Username" onChange={(value) => updateCredentialForm("username", value)} value={credentialForm.username} />
               <TextField id="entry-email" label="Email" onChange={(value) => updateCredentialForm("email", value)} type="email" value={credentialForm.email} />
-              <TextField
+              <PasswordField
                 action={
                   <button className="password-inline-action" onClick={() => setShowEntryPassword((current) => !current)} type="button">
                     {showEntryPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
@@ -962,8 +1050,8 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                 id="entry-password"
                 label="Password"
                 onChange={(value) => updateCredentialForm("password", value)}
-                type={showEntryPassword ? "text" : "password"}
                 value={credentialForm.password}
+                visible={showEntryPassword}
               />
             </div>
           </section>
@@ -1062,6 +1150,85 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     );
   }
 
+  function renderSettingsConfirmation() {
+    if (!settingsConfirmAction) return null;
+
+    const details: Record<SettingsConfirmAction, { actionLabel: string; description: string; title: string }> = {
+      "clear-logs": {
+        actionLabel: "Clear logs",
+        description: "Confirm your account password before clearing activity logs from this dashboard view.",
+        title: "Clear activity logs",
+      },
+      "delete-account": {
+        actionLabel: "Delete account",
+        description: "Confirm your account password before scheduling account deletion.",
+        title: "Delete account",
+      },
+      "delete-vault": {
+        actionLabel: "Delete vault data",
+        description: "Confirm your account password before scheduling vault data deletion.",
+        title: "Delete vault data",
+      },
+      "export-data": {
+        actionLabel: "Request export",
+        description: "Confirm your account password before requesting an encrypted data export.",
+        title: "Export account data",
+      },
+    };
+    const current = details[settingsConfirmAction];
+    const isBusy = busyAction === `settings-confirm-${settingsConfirmAction}`;
+
+    return (
+      <motion.div
+        animate={{ opacity: 1 }}
+        aria-labelledby="settings-confirm-title"
+        aria-modal="true"
+        className="settings-confirm"
+        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }}
+        role="dialog"
+      >
+        <motion.form
+          animate={{ scale: 1, y: 0 }}
+          className="settings-confirm__panel"
+          exit={{ scale: 0.98, y: 10 }}
+          initial={{ scale: 0.98, y: 10 }}
+          onSubmit={handleSettingsConfirmation}
+        >
+          <header className="settings-confirm__header">
+            <div>
+              <p>Secure confirmation</p>
+              <h2 id="settings-confirm-title">{current.title}</h2>
+            </div>
+            <button aria-label="Close confirmation" disabled={isBusy} onClick={closeSettingsConfirmation} type="button">
+              <X aria-hidden="true" />
+            </button>
+          </header>
+          <div className="settings-confirm__body">
+            <p>{current.description}</p>
+            <PasswordField
+              autoComplete="current-password"
+              id="settings-confirm-password"
+              label="Account password"
+              onChange={setSettingsConfirmPassword}
+              value={settingsConfirmPassword}
+            />
+            {settingsConfirmError ? <div className="entry-form-error">{settingsConfirmError}</div> : null}
+          </div>
+          <footer className="settings-confirm__footer">
+            <Button loading={isBusy} type="submit" variant={settingsConfirmAction === "export-data" ? "primary" : "ghost"}>
+              {settingsConfirmAction === "export-data" ? <Clipboard aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
+              {current.actionLabel}
+            </Button>
+            <Button disabled={isBusy} onClick={closeSettingsConfirmation} variant="ghost">
+              Cancel
+            </Button>
+          </footer>
+        </motion.form>
+      </motion.div>
+    );
+  }
+
   function renderSecurityCenter() {
     return (
       <div className="dashboard-grid dashboard-grid--two">
@@ -1135,21 +1302,238 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
 
   function renderSettings() {
     return (
-      <div className="dashboard-grid dashboard-grid--two">
+      <div className="settings-stack">
         <Panel title="Recovery status">
-          <StatusLine label="Email verified" ok={me.user.emailVerified} />
-          <StatusLine label="Security questions configured" ok={me.securityQuestionsConfigured} />
-          <StatusLine label="Vault recovery key" ok={me.vaultConfigured} value={me.vaultConfigured ? "Configured" : "Required"} />
+          <div className="settings-status-list">
+            <StatusLine label="Email verified" ok={me.user.emailVerified} />
+            <StatusLine label="Security questions configured" ok={me.securityQuestionsConfigured} />
+            <StatusLine label="Vault recovery key" ok={me.vaultConfigured} value={me.vaultConfigured ? "Configured" : "Required"} />
+          </div>
         </Panel>
+
+        <Panel title="Functional preferences">
+          <form className="settings-form" onSubmit={handleSaveSettings}>
+            <div className="settings-grid">
+              <TextField
+                id="settings-auto-lock"
+                inputMode="numeric"
+                label="Auto-lock minutes"
+                min={0}
+                onChange={(value) => updateSettingsPreference("autoLockMinutes", value)}
+                type="number"
+                value={settingsPreferences.autoLockMinutes}
+              />
+              <TextField
+                id="settings-clipboard-clear"
+                inputMode="numeric"
+                label="Clipboard clear seconds"
+                min={5}
+                onChange={(value) => updateSettingsPreference("clipboardClearSeconds", value)}
+                type="number"
+                value={settingsPreferences.clipboardClearSeconds}
+              />
+              <label className="settings-select-field">
+                <span>Theme mode</span>
+                <select onChange={(event) => updateSettingsPreference("themeMode", event.currentTarget.value)} value={settingsPreferences.themeMode}>
+                  <option value="system">System</option>
+                  <option value="dark">Dark</option>
+                  <option value="high-contrast">High contrast</option>
+                </select>
+              </label>
+              <label className="settings-select-field">
+                <span>Activity retention</span>
+                <select
+                  onChange={(event) => updateSettingsPreference("activityRetentionDays", event.currentTarget.value)}
+                  value={settingsPreferences.activityRetentionDays}
+                >
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="365">1 year</option>
+                </select>
+              </label>
+            </div>
+            <div className="settings-toggle-list">
+              <label className="settings-toggle">
+                <input
+                  checked={settingsPreferences.requirePasswordConfirmation}
+                  onChange={(event) => updateSettingsPreference("requirePasswordConfirmation", event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Require password confirmation for sensitive actions</span>
+              </label>
+              <label className="settings-toggle">
+                <input
+                  checked={settingsPreferences.compactVault}
+                  onChange={(event) => updateSettingsPreference("compactVault", event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Compact vault cards</span>
+              </label>
+            </div>
+            <Button type="submit">
+              <Settings aria-hidden="true" />
+              Save preferences
+            </Button>
+          </form>
+        </Panel>
+
+        <Panel title="Account & profile">
+          <div className="settings-profile">
+            <UserRound aria-hidden="true" />
+            <div>
+              <strong>{me.user.username}</strong>
+              <span>{me.user.email}</span>
+              <small>{me.user.emailVerified ? "Verified email" : "Email verification required"}</small>
+            </div>
+          </div>
+          <div className="settings-status-list">
+            <StatusLine label="Protected session" ok={Boolean(me.activeSessionId)} value="Active" />
+            <StatusLine label="Recovery questions" ok={me.securityQuestionsConfigured} />
+          </div>
+        </Panel>
+
         <Panel title="Change account password">
           <form className="dashboard-form" onSubmit={handleChangePassword}>
-            <TextField id="current-account-password" label="Current password" onChange={setCurrentPassword} type="password" value={currentPassword} />
-            <TextField id="new-account-password" label="New password" onChange={setNewAccountPassword} type="password" value={newAccountPassword} />
-            <TextField id="confirm-account-password" label="Confirm new password" onChange={setConfirmAccountPassword} type="password" value={confirmAccountPassword} />
+            <PasswordField id="current-account-password" label="Current password" onChange={setCurrentPassword} value={currentPassword} />
+            <PasswordField id="new-account-password" label="New password" onChange={setNewAccountPassword} value={newAccountPassword} />
+            <PasswordField id="confirm-account-password" label="Confirm new password" onChange={setConfirmAccountPassword} value={confirmAccountPassword} />
             <Button loading={busyAction === "change-password"} type="submit">
               Change password
             </Button>
           </form>
+        </Panel>
+
+        <Panel title="Data export">
+          <p className="panel-copy">Export requests are encrypted and require account password confirmation.</p>
+          <div className="settings-grid">
+            <label className="settings-select-field">
+              <span>Export format</span>
+              <select onChange={(event) => updateSettingsPreference("exportFormat", event.currentTarget.value)} value={settingsPreferences.exportFormat}>
+                <option value="encrypted-json">Encrypted JSON</option>
+                <option value="vault-envelope">Vault envelope only</option>
+                <option value="activity-summary">Activity summary</option>
+              </select>
+            </label>
+            <div className="settings-mini-card">
+              <strong>{credentials.length}</strong>
+              <span>Vault records available</span>
+            </div>
+          </div>
+          <div className="settings-actions">
+            <Button onClick={() => openSettingsConfirmation("export-data")}>
+              <Clipboard aria-hidden="true" />
+              Request encrypted export
+            </Button>
+          </div>
+        </Panel>
+
+        <Panel title="Activity and security settings">
+          <div className="settings-status-list">
+            <StatusLine label="Recent activity entries" ok={activity.length > 0} value={String(activity.length)} />
+            <StatusLine label="Vault unlocked" ok={vaultUnlocked} value={vaultUnlocked ? "Unlocked" : "Locked"} />
+            <StatusLine label="Security score" ok={vaultUnlocked && securityAnalysis.status === "secure"} value={vaultUnlocked ? String(securityAnalysis.score) : "Locked"} />
+          </div>
+          <div className="settings-actions">
+            <Button onClick={() => void refreshActivity()} variant="ghost">
+              <Activity aria-hidden="true" />
+              Refresh activity
+            </Button>
+            <Button onClick={() => openSettingsConfirmation("clear-logs")} variant="ghost">
+              <Trash2 aria-hidden="true" />
+              Clear logs
+            </Button>
+          </div>
+        </Panel>
+
+        <Panel title="Category and password generator settings">
+          <form className="settings-form" onSubmit={handleSaveSettings}>
+            <div className="settings-grid">
+              <label className="settings-select-field">
+                <span>Default category</span>
+                <select
+                  onChange={(event) => updateSettingsPreference("defaultCategory", event.currentTarget.value)}
+                  value={settingsPreferences.defaultCategory}
+                >
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <TextField
+                id="settings-password-length"
+                inputMode="numeric"
+                label="Generated password length"
+                min={10}
+                onChange={(value) => updateSettingsPreference("passwordLength", value)}
+                type="number"
+                value={settingsPreferences.passwordLength}
+              />
+            </div>
+            <div className="settings-toggle-list">
+              <label className="settings-toggle">
+                <input
+                  checked={settingsPreferences.includeNumbers}
+                  onChange={(event) => updateSettingsPreference("includeNumbers", event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Include numbers</span>
+              </label>
+              <label className="settings-toggle">
+                <input
+                  checked={settingsPreferences.includeSymbols}
+                  onChange={(event) => updateSettingsPreference("includeSymbols", event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Include symbols</span>
+              </label>
+            </div>
+            <Button type="submit" variant="ghost">
+              <KeyRound aria-hidden="true" />
+              Save generator defaults
+            </Button>
+          </form>
+        </Panel>
+
+        <Panel title="Danger zone">
+          <p className="panel-copy">Destructive requests require password confirmation before they continue.</p>
+          <div className="settings-actions">
+            <Button onClick={() => openSettingsConfirmation("delete-vault")} variant="ghost">
+              <Trash2 aria-hidden="true" />
+              Delete vault data
+            </Button>
+            <Button onClick={() => openSettingsConfirmation("delete-account")} variant="ghost">
+              <ShieldAlert aria-hidden="true" />
+              Delete account
+            </Button>
+          </div>
+        </Panel>
+
+        <Panel title="Trusted sessions">
+          {sessions.length === 0 ? (
+            <div className="empty-state">No active sessions were returned by SecureLocker.</div>
+          ) : (
+            <div className="settings-session-list">
+              {sessions.slice(0, 5).map((session) => (
+                <article className="settings-session-card" key={session.id}>
+                  <MonitorSmartphone aria-hidden="true" />
+                  <div>
+                    <strong>{formatDevice(session.userAgent)}</strong>
+                    <span>{session.ipAddress ?? "Unknown IP"}</span>
+                    <small>Last access {formatDate(session.lastUsedAt)}</small>
+                  </div>
+                  {session.current ? (
+                    <span className="current-badge">Current</span>
+                  ) : (
+                    <Button loading={busyAction === `session-${session.id}`} onClick={() => void handleRevokeSession(session.id)} variant="ghost">
+                      Revoke
+                    </Button>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
         </Panel>
       </div>
     );

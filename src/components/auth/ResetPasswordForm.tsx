@@ -5,7 +5,7 @@ import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
 import { PasswordStrength } from "./PasswordStrength";
 import { PasswordToggle } from "./PasswordToggle";
 import { Button } from "../ui/Button";
-import { TextField } from "../ui/TextField";
+import { PasswordField } from "../ui/PasswordField";
 import { useFormField } from "../../hooks/useFormField";
 import { authApi } from "../../lib/authApi";
 import {
@@ -93,7 +93,7 @@ export function ResetPasswordForm({ onBack, token }: ResetPasswordFormProps) {
       <AnimatePresence>{notice ? <AuthNotice notice={notice} /> : null}</AnimatePresence>
 
       <div className="auth-form__fields">
-        <TextField
+        <PasswordField
           action={
             <PasswordToggle
               isVisible={passwordVisible}
@@ -109,11 +109,11 @@ export function ResetPasswordForm({ onBack, token }: ResetPasswordFormProps) {
           onChange={password.onChange}
           placeholder="Create password"
           touched={password.touched}
-          type={passwordVisible ? "text" : "password"}
           value={password.value}
+          visible={passwordVisible}
         />
         <PasswordStrength strength={strength} visible={password.value.length > 0} />
-        <TextField
+        <PasswordField
           action={
             <PasswordToggle
               isVisible={confirmPasswordVisible}
@@ -129,8 +129,8 @@ export function ResetPasswordForm({ onBack, token }: ResetPasswordFormProps) {
           onChange={confirmPassword.onChange}
           placeholder="Confirm password"
           touched={confirmPassword.touched}
-          type={confirmPasswordVisible ? "text" : "password"}
           value={confirmPassword.value}
+          visible={confirmPasswordVisible}
         />
       </div>
 

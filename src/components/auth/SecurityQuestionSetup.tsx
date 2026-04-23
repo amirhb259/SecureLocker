@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ShieldCheck } from "lucide-react";
 import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
 import { Button } from "../ui/Button";
-import { TextField } from "../ui/TextField";
+import { PasswordField } from "../ui/PasswordField";
 import { authApi, type SecurityQuestion } from "../../lib/authApi";
 
 type SecurityQuestionSetupProps = {
@@ -155,7 +155,7 @@ export function SecurityQuestionSetup({ onComplete, token }: SecurityQuestionSet
                 <span className="field__error">Choose a different question.</span>
               ) : null}
             </label>
-            <TextField
+            <PasswordField
               error={row.answer.trim().length < 2 ? "Answer is required." : undefined}
               id={`security-answer-${index}`}
               label={`Answer ${index + 1}`}
@@ -163,7 +163,6 @@ export function SecurityQuestionSetup({ onComplete, token }: SecurityQuestionSet
               onChange={(answer) => updateRow(index, { answer })}
               placeholder="Enter answer"
               touched={touched[index]}
-              type="password"
               value={row.answer}
             />
           </div>

@@ -4,6 +4,7 @@ import { LockKeyhole, Mail } from "lucide-react";
 import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
 import { PasswordToggle } from "./PasswordToggle";
 import { Button } from "../ui/Button";
+import { PasswordField } from "../ui/PasswordField";
 import { TextField } from "../ui/TextField";
 import { useFormField } from "../../hooks/useFormField";
 import { ApiError, authApi, storeSession } from "../../lib/authApi";
@@ -148,7 +149,7 @@ export function LoginForm({
           value={email.value}
         />
 
-        <TextField
+        <PasswordField
           action={
             <PasswordToggle
               isVisible={passwordVisible}
@@ -164,8 +165,8 @@ export function LoginForm({
           onChange={password.onChange}
           placeholder="Enter password"
           touched={password.touched}
-          type={passwordVisible ? "text" : "password"}
           value={password.value}
+          visible={passwordVisible}
         />
       </div>
 
