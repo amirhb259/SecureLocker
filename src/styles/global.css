@@ -55,3 +55,135 @@ button {
   color: #041018;
   background: #83ffe6;
 }
+
+
+.app-version-badge {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 20;
+  pointer-events: none;
+  color: rgba(237, 247, 255, 0.56);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.update-changelog {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(1, 5, 11, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.update-changelog__panel {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  border: 1px solid rgba(142, 232, 255, 0.16);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(109, 246, 222, 0.08), transparent 40%),
+    rgba(8, 15, 26, 0.96);
+  box-shadow: 0 34px 110px rgba(0, 0, 0, 0.56);
+}
+
+.update-changelog__header,
+.update-changelog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 20px 22px;
+}
+
+.update-changelog__header {
+  border-bottom: 1px solid rgba(142, 232, 255, 0.16);
+}
+
+.update-changelog__header p {
+  margin: 0 0 4px;
+  color: #6df6de;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.update-changelog__header h2 {
+  margin: 0;
+  font-family: "Space Grotesk Variable", "Inter Variable", sans-serif;
+  font-size: clamp(1.3rem, 2vw, 1.8rem);
+  line-height: 1.05;
+}
+
+.update-changelog__header button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: rgba(237, 247, 255, 0.8);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.update-changelog__body {
+  overflow: auto;
+  padding: 18px 22px 10px;
+}
+
+.update-changelog__body ul {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.update-changelog__body li {
+  color: rgba(237, 247, 255, 0.88);
+}
+
+.update-changelog__footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(142, 232, 255, 0.16);
+}
+
+.update-changelog__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: #03060b;
+  font-weight: 800;
+  background: linear-gradient(135deg, #6df6de, #92b7ff);
+}
+
+@media (max-width: 560px) {
+  .app-version-badge {
+    right: 12px;
+    bottom: 10px;
+  }
+
+  .update-changelog {
+    padding: 10px;
+  }
+
+  .update-changelog__panel {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .update-changelog__header,
+  .update-changelog__footer,
+  .update-changelog__body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}

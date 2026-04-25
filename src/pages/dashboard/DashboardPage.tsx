@@ -7,6 +7,7 @@ import {
   Clipboard,
   Copy,
   CreditCard,
+  Download,
   Edit3,
   Eye,
   EyeOff,
@@ -54,6 +55,7 @@ import {
   type DecryptedCredential,
   type VaultSecret,
 } from "../../lib/vaultCrypto";
+import { AppUpdaterError, isTauriRuntime, runUpdateFlow } from "../../lib/updater";
 import "../../styles/dashboard.css";
 
 type DashboardPageProps = {
@@ -235,6 +237,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
 
   useEffect(() => {
     if (notice) {
@@ -634,6 +637,24 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     }
   }
 
+  async function handleCheckForUpdates() {
+    try {
+      setIsCheckingForUpdates(true);
+      const result = await runUpdateFlow();
+
+      if (result === "up-to-date") {
+        setNotice({ message: "You are up to date.", tone: "success" });
+      }
+    } catch (error) {
+      setNotice({
+        message: error instanceof AppUpdaterError && error.stage === "install" ? "Update installation failed." : "Update check failed.",
+        tone: "error",
+      });
+    } finally {
+      setIsCheckingForUpdates(false);
+    }
+  }
+
   function beginEdit(credential: DecryptedCredential) {
     setEditingCredential(credential);
     setCredentialForm({
@@ -827,9 +848,23 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
             <p>Secure Locker</p>
             <h1>{sections.find((section) => section.id === activeSection)?.label}</h1>
           </div>
-          <div className="dashboard-user">
-            <span>{displayUsername}</span>
-            <small>{displayEmail}</small>
+          <div className="dashboard-header__actions">
+            {isTauriRuntime() ? (
+              <button
+                aria-label="Check for updates"
+                className={clsx("icon-button", "icon-button--header", isCheckingForUpdates && "icon-button--spinning")}
+                disabled={isCheckingForUpdates}
+                onClick={() => void handleCheckForUpdates()}
+                title="Check for updates"
+                type="button"
+              >
+                <Download aria-hidden="true" />
+              </button>
+            ) : null}
+            <div className="dashboard-user">
+              <span>{displayUsername}</span>
+              <small>{displayEmail}</small>
+            </div>
           </div>
         </header>
 

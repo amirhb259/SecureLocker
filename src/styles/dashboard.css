@@ -259,6 +259,13 @@ svg {
   margin-bottom: 14px;
 }
 
+.dashboard-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .dashboard-header > div {
   min-width: 0;
 }
@@ -813,6 +820,14 @@ svg {
 .icon-button svg {
   width: 16px;
   height: 16px;
+}
+
+.icon-button--header {
+  flex: 0 0 auto;
+}
+
+.icon-button--spinning svg {
+  animation: dashboard-spin 0.9s linear infinite;
 }
 
 .delete-confirm {
@@ -2035,6 +2050,10 @@ svg {
   .dashboard-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dashboard-header__actions {
+    width: 100%;
   }
 
   .dashboard-user {

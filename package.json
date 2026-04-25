@@ -1,7 +1,7 @@
 {
   "name": "securelocker",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,7 +17,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "release:build": "npm run tauri build",
+    "release:latest-json": "node scripts/generate-latest-json.mjs",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -28,6 +31,8 @@
     "@prisma/client": "^6.19.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "argon2": "^0.44.0",
     "clsx": "^2.1.1",
     "cors": "^2.8.6",

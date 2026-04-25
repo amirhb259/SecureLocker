@@ -1,0 +1,17 @@
+{
+  "version": "0.1.1",
+  "releaseDate": "2026-04-25",
+  "newFeatures": [
+    "Added a real SecureLocker header update action that checks, downloads, and installs signed Tauri updates.",
+    "Added a post-update changelog overlay that appears once after the app restarts on a newly installed version."
+  ],
+  "newSettings": [
+    "Added a subtle in-app version label in the bottom-right corner so the running desktop build is always visible."
+  ],
+  "securityImprovements": [
+    "Updater installs now rely on the configured Tauri public key and reject unsigned or invalid release artifacts."
+  ],
+  "bugFixes": [
+    "Kept update state separate from the authentication session flow so background update checks do not interfere with sign-in state."
+  ]
+}
