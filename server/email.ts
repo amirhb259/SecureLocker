@@ -2,8 +2,8 @@ import path from "node:path";
 import nodemailer from "nodemailer";
 import { config } from "./config.js";
 
-const logoCid = "securelocker-logo@securelocker";
-const logoPath = path.resolve(process.cwd(), "src/assets/securelocker-logo.png");
+const logoCid = "new-securelocker-logo@securelocker";
+const logoPath = path.resolve(process.cwd(), "src/assets/new-securelocker-logo.png");
 
 const transport = nodemailer.createTransport({
   auth: {
@@ -103,7 +103,7 @@ async function sendSecureMail(to: string, email: SecureEmail) {
         cid: logoCid,
         contentDisposition: "inline",
         contentType: "image/png",
-        filename: "securelocker-logo.png",
+        filename: "new-securelocker-logo.png",
         path: logoPath,
       },
     ],

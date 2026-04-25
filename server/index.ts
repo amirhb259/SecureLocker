@@ -32,6 +32,7 @@ import {
   changePasswordSchema,
   emailSchema,
   loginSchema,
+  passwordConfirmationSchema,
   recoveryChallengeSchema,
   recoveryCompleteSchema,
   recoveryStartSchema,
@@ -52,7 +53,14 @@ app.use(
   cors({
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: false,
-    origin: config.CORS_ORIGIN,
+    origin: (origin, callback) => {
+      if (!origin || config.CORS_ORIGINS.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} is not allowed by SecureLocker CORS policy.`));
+    },
   }),
 );
 app.use(express.json({ limit: "24kb" }));
@@ -890,6 +898,45 @@ app.get("/api/activity", requireAuth, async (req, res, next) => {
   }
 });
 
+app.delete("/api/activity", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const input = passwordConfirmationSchema.parse(req.body);
+    const user = await prisma.user.findUnique({
+      select: { email: true, id: true, passwordHash: true },
+      where: { id: authReq.auth.user.id },
+    });
+
+    if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
+      sendApiError(res, 400, "INVALID_CREDENTIALS", "Invalid credentials.");
+      return;
+    }
+
+    const [vaultActivities, loginAttempts, securityActionTokens, securityEvents, recoveryAttempts, accountLockEvents] =
+      await prisma.$transaction([
+        prisma.vaultActivity.deleteMany({ where: { userId: user.id } }),
+        prisma.loginAttempt.deleteMany({ where: { email: user.email } }),
+        prisma.securityActionToken.deleteMany({ where: { userId: user.id } }),
+        prisma.securityEvent.deleteMany({ where: { userId: user.id } }),
+        prisma.recoveryAttempt.deleteMany({ where: { userId: user.id } }),
+        prisma.accountLockEvent.deleteMany({ where: { userId: user.id } }),
+      ]);
+
+    res.json({
+      deletedCount:
+        vaultActivities.count +
+        loginAttempts.count +
+        securityActionTokens.count +
+        securityEvents.count +
+        recoveryAttempts.count +
+        accountLockEvents.count,
+      message: "Activity logs permanently deleted.",
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/sessions", requireAuth, async (req, res, next) => {
   try {
     const authReq = req as AuthenticatedRequest;
@@ -959,13 +1006,24 @@ app.post("/api/auth/logout", requireAuth, async (req, res, next) => {
 
 app.post("/api/auth/register", authLimiter, async (req, res, next) => {
   try {
-    const input = registerSchema.parse(req.body);
+    const parsedInput = registerSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(
+        res,
+        400,
+        "VALIDATION_ERROR",
+        parsedInput.error.issues[0]?.message ?? "Submitted details are invalid.",
+      );
+      return;
+    }
+
+    const input = parsedInput.data;
     const ipAddress = clientIp(req);
     const userAgent = clientUserAgent(req);
     const existingUser = await prisma.user.findFirst({
       select: { email: true, username: true },
       where: {
-        OR: [{ email: input.email }, { username: input.username }],
+        OR: [{ email: input.email }, { username: { equals: input.username, mode: "insensitive" } }],
       },
     });
 
@@ -974,8 +1032,8 @@ app.post("/api/auth/register", authLimiter, async (req, res, next) => {
       return;
     }
 
-    if (existingUser?.username === input.username) {
-      sendApiError(res, 409, "USERNAME_EXISTS", "Username already in use.");
+    if (existingUser?.username.toLowerCase() === input.username.toLowerCase()) {
+      sendApiError(res, 409, "USERNAME_EXISTS", "Username already exists");
       return;
     }
 
@@ -1007,7 +1065,7 @@ app.post("/api/auth/register", authLimiter, async (req, res, next) => {
         return;
       }
       if (target.includes("username")) {
-        sendApiError(res, 409, "USERNAME_EXISTS", "Username already in use.");
+        sendApiError(res, 409, "USERNAME_EXISTS", "Username already exists");
         return;
       }
       sendApiError(res, 409, "VALIDATION_ERROR", "Account details conflict with an existing account.");
@@ -1579,6 +1637,54 @@ app.post("/api/auth/change-password", requireAuth, async (req, res, next) => {
     ]);
 
     res.json({ message: "Password changed. Other sessions were revoked." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/vault", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    const user = await prisma.user.findUnique({ where: { id: authReq.auth.user.id } });
+
+    if (!user || !(await verifyPassword(user.passwordHash, password))) {
+      sendApiError(res, 401, "INVALID_CREDENTIALS", "Password is incorrect.");
+      return;
+    }
+
+    await prisma.vault.deleteMany({ where: { userId: authReq.auth.user.id } });
+    await prisma.securityEvent.create({
+      data: {
+        action: "vault_deleted",
+        ipAddress: clientIp(req),
+        resolvedAt: new Date(),
+        status: SecurityEventStatus.TRUSTED,
+        type: SecurityEventType.SUSPICIOUS_LOGIN,
+        userAgent: clientUserAgent(req),
+        userId: authReq.auth.user.id,
+      },
+    });
+
+    res.json({ message: "Vault data deleted." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/account", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    const user = await prisma.user.findUnique({ where: { id: authReq.auth.user.id } });
+
+    if (!user || !(await verifyPassword(user.passwordHash, password))) {
+      sendApiError(res, 401, "INVALID_CREDENTIALS", "Password is incorrect.");
+      return;
+    }
+
+    await prisma.user.delete({ where: { id: authReq.auth.user.id } });
+    res.json({ message: "Account scheduled for deletion." });
   } catch (error) {
     next(error);
   }

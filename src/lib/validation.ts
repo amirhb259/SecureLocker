@@ -32,16 +32,24 @@ export function validateUsername(value: string) {
 
   const trimmed = value.trim();
 
-  if (trimmed.length < 3) {
-    return "Username must be at least 3 characters.";
+  if (trimmed.length < 5) {
+    return "Username must be at least 5 characters";
   }
 
   if (trimmed.length > 32) {
     return "Username must be 32 characters or less.";
   }
 
-  if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
-    return "Use letters, numbers, dots, hyphens, or underscores.";
+  if (/^[a-z]/.test(trimmed)) {
+    return "Username must start with a capital letter";
+  }
+
+  if (!/^[A-Z]/.test(trimmed)) {
+    return "Username cannot start with a number or symbol";
+  }
+
+  if (!/^[A-Za-z0-9]+$/.test(trimmed)) {
+    return "Username can only contain letters and numbers";
   }
 
   return "";

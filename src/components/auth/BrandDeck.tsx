@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { Fingerprint, KeyRound, ScanFace } from "lucide-react";
-import secureLockerLogo from "../../assets/securelocker-logo.png";
+import secureLockerLogo from "../../assets/new-securelocker-logo.png";
 
 const systemStats = [
   { label: "Identity", value: "Protected" },

@@ -14,9 +14,32 @@ export const registerSchema = z.object({
   username: z
     .string()
     .trim()
-    .min(3)
+    .min(5, "Username must be at least 5 characters")
     .max(32)
-    .regex(/^[a-zA-Z0-9._-]+$/),
+    .superRefine((username, ctx) => {
+      if (/^[a-z]/.test(username)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Username must start with a capital letter",
+        });
+        return;
+      }
+
+      if (!/^[A-Z]/.test(username)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Username cannot start with a number or symbol",
+        });
+        return;
+      }
+
+      if (!/^[A-Za-z0-9]+$/.test(username)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Username can only contain letters and numbers",
+        });
+      }
+    }),
 });
 
 export const loginSchema = z.object({
@@ -37,6 +60,10 @@ export const resetPasswordSchema = z.object({
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: passwordSchema,
+});
+
+export const passwordConfirmationSchema = z.object({
+  password: z.string().min(1),
 });
 
 const encryptedBlobSchema = z.string().min(16).max(200_000);

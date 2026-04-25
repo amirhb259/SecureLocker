@@ -58,6 +58,21 @@ export const dashboardApi = {
       body: JSON.stringify({ currentPassword, newPassword }),
       method: "POST",
     }),
+  clearActivity: (password: string) =>
+    authenticatedRequest<{ deletedCount: number; message: string }>("/activity", {
+      body: JSON.stringify({ password }),
+      method: "DELETE",
+    }),
+  deleteAccount: (password: string) =>
+    authenticatedRequest<{ message: string }>("/account", {
+      body: JSON.stringify({ password }),
+      method: "DELETE",
+    }),
+  deleteVault: (password: string) =>
+    authenticatedRequest<{ message: string }>("/vault", {
+      body: JSON.stringify({ password }),
+      method: "DELETE",
+    }),
   createCredential: (credential: { ciphertext: string; nonce: string }) =>
     authenticatedRequest<{ credential: EncryptedCredential }>("/vault/credentials", {
       body: JSON.stringify(credential),

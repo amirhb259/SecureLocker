@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AuthPage } from "../pages/auth/AuthPage";
 import { DashboardPage } from "../pages/dashboard/DashboardPage";
+import secureLockerLogo from "../assets/new-securelocker-logo.png";
 import { clearStoredSession, getStoredSession, sessionChangedEvent, type AuthSession } from "../lib/authApi";
 import { dashboardApi, type MeResponse } from "../lib/dashboardApi";
 
@@ -54,7 +55,10 @@ export default function App() {
     return (
       <main className="auth-page">
         <div className="ambient-grid" aria-hidden="true" />
-        <div className="session-boot">Securing dashboard session...</div>
+        <div className="session-boot">
+          <img src={secureLockerLogo} alt="SecureLocker" />
+          <span>Securing dashboard session...</span>
+        </div>
       </main>
     );
   }

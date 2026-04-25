@@ -4,7 +4,7 @@ import { z } from "zod";
 const envSchema = z.object({
   API_BASE_URL: z.string().url().default("http://127.0.0.1:4100"),
   AUTH_TOKEN_PEPPER: z.string().min(24),
-  CORS_ORIGIN: z.string().url().default("http://127.0.0.1:1420"),
+  CORS_ORIGIN: z.string().default("http://127.0.0.1:1420,http://tauri.localhost,tauri://localhost"),
   DATABASE_URL: z.string().min(1),
   FRONTEND_URL: z.string().url().default("http://127.0.0.1:1420"),
   JWT_SECRET: z.string().min(32),
@@ -18,4 +18,9 @@ const envSchema = z.object({
   SMTP_USER: z.string().min(1),
 });
 
-export const config = envSchema.parse(process.env);
+const parsedConfig = envSchema.parse(process.env);
+
+export const config = {
+  ...parsedConfig,
+  CORS_ORIGINS: parsedConfig.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean),
+};

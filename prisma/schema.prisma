@@ -13,13 +13,17 @@ model User {
   email                       String                       @unique @db.VarChar(320)
   passwordHash                String                       @map("password_hash")
   emailVerifiedAt             DateTime?                    @map("email_verified_at")
+  accountStatus               UserAccountStatus            @default(ACTIVE) @map("account_status")
   createdAt                   DateTime                     @default(now()) @map("created_at")
   updatedAt                   DateTime                     @updatedAt @map("updated_at")
   lockedAt                    DateTime?                    @map("locked_at")
   lockedReason                String?                      @map("locked_reason") @db.VarChar(128)
   accountLockEvents           AccountLockEvent[]
   accountRecoveryTokens       AccountRecoveryToken[]
+  auditLogs                   AuditLog[]
+  destructiveActionCodes      DestructiveActionCode[]
   verificationTokens          EmailVerificationToken[]
+  passwordHistory             PasswordHistory[]
   passwordResetTokens         PasswordResetToken[]
   recoveryAttempts            RecoveryAttempt[]
   securityActionTokens        SecurityActionToken[]
@@ -121,6 +125,7 @@ model Session {
   ipAddress  String?   @map("ip_address") @db.VarChar(64)
   userAgent  String?   @map("user_agent") @db.VarChar(512)
   createdAt  DateTime  @default(now()) @map("created_at")
+  auditLogs  AuditLog[]
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -139,6 +144,60 @@ model LoginAttempt {
   @@index([email, createdAt])
   @@index([ipAddress, createdAt])
   @@map("login_attempts")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  sessionId String?  @map("session_id") @db.Uuid
+  action    String   @db.VarChar(64)
+  details   String?  @db.VarChar(512)
+  ipAddress String   @map("ip_address") @db.VarChar(64)
+  userAgent String?  @map("user_agent") @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at")
+  session   Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([action, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([sessionId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model DestructiveActionCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @map("code_hash")
+  action    String    @db.VarChar(32)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([userId])
+  @@map("destructive_action_codes")
+}
+
+model PasswordHistory {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  passwordHash        String   @map("password_hash")
+  passwordFingerprint String   @map("password_fingerprint") @db.VarChar(128)
+  createdAt           DateTime @default(now()) @map("created_at")
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("password_history")
+}
+
+model UsernameReservation {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @unique @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("username_reservations")
 }
 
 model TrustedIp {
@@ -298,4 +357,11 @@ enum SecurityEventStatus {
 enum SecurityActionType {
   TRUST_IP
   SECURE_ACCOUNT
+}
+
+enum UserAccountStatus {
+  ACTIVE
+  LOCKED
+  SCHEDULED_DELETION
+  DEACTIVATED
 }

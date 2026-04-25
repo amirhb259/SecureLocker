@@ -28,7 +28,8 @@
   position: relative;
   display: grid;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--s6);
   place-items: center;
   isolation: isolate;
@@ -688,6 +689,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--s4);
   margin-top: var(--s3);
 }
@@ -706,6 +708,8 @@
 
 .secure-check input {
   position: absolute;
+  width: 0;
+  height: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -743,6 +747,9 @@
 
 .text-action,
 .auth-form__switch button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   padding: 0;
   color: var(--accent);
   cursor: pointer;
@@ -770,6 +777,7 @@
   font-size: 0.92rem;
   font-weight: 820;
   letter-spacing: 0;
+  text-align: center;
   transition:
     transform 150ms ease,
     box-shadow 150ms ease,
@@ -814,7 +822,13 @@
 .ui-button__spinner {
   width: 18px;
   height: 18px;
+  flex: 0 0 auto;
   animation: slow-spin 850ms linear infinite;
+}
+
+.ui-button > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .auth-form__submit {
@@ -924,6 +938,7 @@
     grid-template-columns: 1fr;
     min-height: auto;
     max-height: none;
+    overflow: visible;
   }
 
   .brand-deck {
@@ -1216,6 +1231,29 @@
   .password-strength__copy {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-page {
+    padding: var(--s2);
+  }
+
+  .brand-deck,
+  .auth-panel {
+    padding: var(--s4);
+  }
+
+  .brand-deck__topline {
+    align-items: flex-start;
+  }
+
+  .auth-form__header h1 {
+    font-size: 1.72rem;
+  }
+
+  .auth-panel__stack {
+    max-height: none;
   }
 }
 

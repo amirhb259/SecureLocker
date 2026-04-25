@@ -89,13 +89,13 @@ function userMessageFor(code: string | undefined, fallback: string | undefined) 
     case "TOO_MANY_ATTEMPTS":
       return "Too many attempts, please try again later.";
     case "USERNAME_EXISTS":
-      return "Username already in use.";
+      return "Username already exists";
     case "VAULT_EXISTS":
       return "Vault is already configured.";
     case "VAULT_NOT_CONFIGURED":
       return "Set up your vault before continuing.";
     case "VALIDATION_ERROR":
-      return "Submitted details are invalid.";
+      return fallback ?? "Submitted details are invalid.";
     case "VERIFICATION_LINK_EXPIRED":
       return "Verification link expired.";
     case "SERVER_ERROR":

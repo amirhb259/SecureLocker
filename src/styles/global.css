@@ -35,6 +35,13 @@ textarea {
   font: inherit;
 }
 
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
+}
+
 button {
   border: 0;
 }
