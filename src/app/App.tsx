@@ -6,8 +6,12 @@ import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import secureLockerLogo from "../assets/new-securelocker-logo.png";
 import { clearStoredSession, getStoredSession, sessionChangedEvent, type AuthSession } from "../lib/authApi";
 import { dashboardApi, type MeResponse } from "../lib/dashboardApi";
+import { runStartupUpdateCheck } from "../lib/desktopSettings";
+import { readStoredSettingsPreferences } from "../lib/settingsPreferences";
 import { consumeUpdateAnnouncement, dismissUpdateAnnouncement, resolveAppVersion, type UpdateAnnouncement } from "../lib/updater";
 import packageJson from "../../package.json";
+
+let startupUpdateCheckLaunched = false;
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(() => getStoredSession());
@@ -44,6 +48,19 @@ export default function App() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    if (startupUpdateCheckLaunched) {
+      return;
+    }
+
+    startupUpdateCheckLaunched = true;
+    if (!readStoredSettingsPreferences().checkForUpdatesOnStartup) {
+      return;
+    }
+
+    void runStartupUpdateCheck();
   }, []);
 
   useEffect(() => {

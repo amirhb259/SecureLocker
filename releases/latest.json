@@ -1,0 +1,26 @@
+{
+  "version": "0.1.1",
+  "notes": "- Added a real SecureLocker header update action that checks, downloads, and installs signed Tauri updates.\n- Added a post-update changelog overlay that appears once after the app restarts on a newly installed version.\n- Added a subtle in-app version label in the bottom-right corner so the running desktop build is always visible.\n- Updater installs now rely on the configured Tauri public key and reject unsigned or invalid release artifacts.\n- Kept update state separate from the authentication session flow so background update checks do not interfere with sign-in state.",
+  "pub_date": "2026-04-25T00:00:00.000Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUYUFSSGlTZkRSd1lFWGgrcjZiVE0xazJNY1hvR3VqaUZsVUc1OEF2UjN2NlRYNmlTNnJvUHVGYTZLQnBIaDFZR2hhWE1zTFZLQTBTTlM4UWpscjJpd2YzaTZEdldMcVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3MTI5NzU3CWZpbGU6U2VjdXJlTG9ja2VyXzAuMS4xX3g2NC1zZXR1cC5leGUKNUxHVW1raml1bHhSSURwdk1UZHl4TEVIejQ4NG9zWWJ3U2RHcEkvY1NDVm9talY3WWUwRDVVaFBjRmxTMmYwbEQremhURk93eUJCOWo1NC9uOTdwQWc9PQo=",
+      "url": "https://github.com/amirhb259/SecureLocker/releases/latest/download/SecureLocker_0.1.1_x64-setup.exe"
+    }
+  },
+  "releaseNotes": {
+    "bugFixes": [
+      "Kept update state separate from the authentication session flow so background update checks do not interfere with sign-in state."
+    ],
+    "newFeatures": [
+      "Added a real SecureLocker header update action that checks, downloads, and installs signed Tauri updates.",
+      "Added a post-update changelog overlay that appears once after the app restarts on a newly installed version."
+    ],
+    "newSettings": [
+      "Added a subtle in-app version label in the bottom-right corner so the running desktop build is always visible."
+    ],
+    "securityImprovements": [
+      "Updater installs now rely on the configured Tauri public key and reject unsigned or invalid release artifacts."
+    ]
+  }
+}

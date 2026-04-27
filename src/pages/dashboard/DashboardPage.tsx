@@ -35,11 +35,13 @@ import { Button } from "../../components/ui/Button";
 import { PasswordField } from "../../components/ui/PasswordField";
 import { TextField } from "../../components/ui/TextField";
 import { ApiError } from "../../lib/authApi";
+import { getAutostartState, setAutostartState } from "../../lib/desktopSettings";
 import {
+  MeResponse,
+  SecurityOverview,
   dashboardApi,
   type DashboardActivity,
   type DashboardOverview,
-  type MeResponse,
   type SessionDevice,
   type VaultEnvelope,
 } from "../../lib/dashboardApi";
@@ -55,8 +57,56 @@ import {
   type DecryptedCredential,
   type VaultSecret,
 } from "../../lib/vaultCrypto";
+import {
+  persistSettingsPreferences,
+  readStoredSettingsPreferences,
+  type QuickAction,
+  type SettingsPreferences,
+} from "../../lib/settingsPreferences";
+import {
+  getSecuritySettings,
+  updateSecuritySettings,
+  type SecuritySettings,
+} from "../../lib/securityApi";
 import { AppUpdaterError, isTauriRuntime, runUpdateFlow } from "../../lib/updater";
 import "../../styles/dashboard.css";
+
+// Component definitions moved to top to avoid hoisting issues
+function Panel({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <section className="dashboard-panel">
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function StatusLine({ label, ok, value }: { label: string; ok: boolean; value?: string }) {
+  return (
+    <div className="status-line">
+      {ok ? <CheckCircle2 aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
+      <span>{label}</span>
+      <strong>{value ?? (ok ? "Ready" : "Attention")}</strong>
+    </div>
+  );
+}
+
+function IconButton({ children, label, onClick }: { children: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button className="icon-button" onClick={onClick} title={label} type="button">
+      {children}
+    </button>
+  );
+}
+
+function MetricCard({ label, tone = "neutral", value }: { label: string; tone?: "neutral" | "success" | "warning"; value: string }) {
+  return (
+    <article className={clsx("metric-card", `metric-card--${tone}`)}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
 
 type DashboardPageProps = {
   initialMe: MeResponse;
@@ -73,21 +123,6 @@ type Notice = {
 type CopyTarget = "email" | "password" | "username" | "website";
 type SettingsConfirmAction = "clear-logs" | "delete-account" | "delete-vault" | "export-data";
 
-type SettingsPreferences = {
-  activityRetentionDays: string;
-  autoLockMinutes: string;
-  clipboardClearSeconds: string;
-  compactVault: boolean;
-  defaultCategory: string;
-  exportFormat: string;
-  hideSensitiveInformation: boolean;
-  includeNumbers: boolean;
-  includeSymbols: boolean;
-  passwordLength: string;
-  requirePasswordConfirmation: boolean;
-  themeMode: string;
-};
-
 const sections: Array<{ icon: typeof LayoutDashboard; id: SectionId; label: string }> = [
   { icon: LayoutDashboard, id: "overview", label: "Overview" },
   { icon: KeyRound, id: "vault", label: "Password Vault" },
@@ -98,59 +133,6 @@ const sections: Array<{ icon: typeof LayoutDashboard; id: SectionId; label: stri
 ];
 
 const categories = ["Social", "Banking", "Gaming", "Work", "Shopping", "Personal", "Custom"];
-
-const defaultSettingsPreferences: SettingsPreferences = {
-  activityRetentionDays: "90",
-  autoLockMinutes: "15",
-  clipboardClearSeconds: "30",
-  compactVault: false,
-  defaultCategory: "Social",
-  exportFormat: "encrypted-json",
-  hideSensitiveInformation: false,
-  includeNumbers: true,
-  includeSymbols: true,
-  passwordLength: "18",
-  requirePasswordConfirmation: true,
-  themeMode: "system",
-};
-
-const settingsPreferencesStorageKey = "securelocker.settings.preferences.v1";
-
-function normalizeSettingsPreferences(value: Partial<SettingsPreferences> | null | undefined): SettingsPreferences {
-  const stored = value ?? {};
-  return {
-    activityRetentionDays:
-      typeof stored.activityRetentionDays === "string" ? stored.activityRetentionDays : defaultSettingsPreferences.activityRetentionDays,
-    autoLockMinutes: typeof stored.autoLockMinutes === "string" ? stored.autoLockMinutes : defaultSettingsPreferences.autoLockMinutes,
-    clipboardClearSeconds:
-      typeof stored.clipboardClearSeconds === "string" ? stored.clipboardClearSeconds : defaultSettingsPreferences.clipboardClearSeconds,
-    compactVault: typeof stored.compactVault === "boolean" ? stored.compactVault : defaultSettingsPreferences.compactVault,
-    defaultCategory: typeof stored.defaultCategory === "string" ? stored.defaultCategory : defaultSettingsPreferences.defaultCategory,
-    exportFormat: typeof stored.exportFormat === "string" ? stored.exportFormat : defaultSettingsPreferences.exportFormat,
-    includeNumbers: typeof stored.includeNumbers === "boolean" ? stored.includeNumbers : defaultSettingsPreferences.includeNumbers,
-    includeSymbols: typeof stored.includeSymbols === "boolean" ? stored.includeSymbols : defaultSettingsPreferences.includeSymbols,
-    passwordLength: typeof stored.passwordLength === "string" ? stored.passwordLength : defaultSettingsPreferences.passwordLength,
-    requirePasswordConfirmation:
-      typeof stored.requirePasswordConfirmation === "boolean"
-        ? stored.requirePasswordConfirmation
-        : defaultSettingsPreferences.requirePasswordConfirmation,
-    themeMode: typeof stored.themeMode === "string" ? stored.themeMode : defaultSettingsPreferences.themeMode,
-    hideSensitiveInformation: typeof stored.hideSensitiveInformation === "boolean" ? stored.hideSensitiveInformation : defaultSettingsPreferences.hideSensitiveInformation,
-  };
-}
-
-function readStoredSettingsPreferences() {
-  try {
-    const raw = window.localStorage.getItem(settingsPreferencesStorageKey);
-    return raw ? normalizeSettingsPreferences(JSON.parse(raw) as Partial<SettingsPreferences>) : defaultSettingsPreferences;
-  } catch {
-    return defaultSettingsPreferences;
-  }
-}
-
-function persistSettingsPreferences(preferences: SettingsPreferences) {
-  window.localStorage.setItem(settingsPreferencesStorageKey, JSON.stringify(preferences));
-}
 
 function friendlyError(error: unknown) {
   return error instanceof ApiError || error instanceof Error ? error.message : "SecureLocker could not complete the request.";
@@ -210,18 +192,20 @@ function domainFromUrl(value: string) {
 }
 
 function maskText(value: string, type: "username" | "email" | "password" | "generic"): string {
+  const dot = "\u2022";
+
   if (!value) return value;
-  if (type === "password") return "••••••••••••";
+  if (type === "password") return dot.repeat(12);
   if (type === "email") {
     const [local, domain] = value.split("@");
-    if (!domain) return "••••••";
+    if (!domain) return dot.repeat(6);
     const [dName, tld] = domain.split(".");
-    return `${"•".repeat(Math.min(local.length, 3))}@${"•".repeat(Math.min(dName.length, 3))}.${tld ?? "com"}`;
+    return `${dot.repeat(Math.min(local.length, 3))}@${dot.repeat(Math.min(dName.length, 3))}.${tld ?? "com"}`;
   }
   if (type === "username") {
-    return value.length <= 2 ? "••" : value[0] + "•".repeat(value.length - 2) + value[value.length - 1];
+    return value.length <= 2 ? dot.repeat(2) : value[0] + dot.repeat(value.length - 2) + value[value.length - 1];
   }
-  return "••••••";
+  return dot.repeat(6);
 }
 
 export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
@@ -229,6 +213,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("overview");
   const [activeSettingsCategory, setActiveSettingsCategory] = useState<string>("general");
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
+  const [securityOverview, setSecurityOverview] = useState<SecurityOverview | null>(null);
   const [activity, setActivity] = useState<DashboardActivity[]>([]);
   const [sessions, setSessions] = useState<SessionDevice[]>([]);
   const [vaultEnvelope, setVaultEnvelope] = useState<VaultEnvelope | null>(null);
@@ -238,6 +223,8 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+  const [isSyncingAutostart, setIsSyncingAutostart] = useState(false);
+  const [securitySettings, setSecuritySettings] = useState<SecuritySettings | null>(null);
 
   useEffect(() => {
     if (notice) {
@@ -256,6 +243,20 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       }
     };
   }, [notice]);
+
+  // Load security settings
+  useEffect(() => {
+    const loadSecuritySettings = async () => {
+      try {
+        const settings = await getSecuritySettings();
+        setSecuritySettings(settings);
+      } catch (error) {
+        console.error("Failed to load security settings:", error);
+      }
+    };
+
+    loadSecuritySettings();
+  }, []);
 
   const [isLoading, setIsLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -283,6 +284,9 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [settingsConfirmError, setSettingsConfirmError] = useState("");
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
+  const [twoFactorFlow, setTwoFactorFlow] = useState<"idle" | "enabling" | "disabling">("idle");
+  const [twoFaCode, setTwoFaCode] = useState("");
+  const [twoFaError, setTwoFaError] = useState("");
 
   // Theme sync effect
   useEffect(() => {
@@ -294,7 +298,45 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     }
   }, [settingsPreferences.themeMode]);
 
-  const securityAnalysis = useMemo(() => analyzeCredentials(credentials), [credentials]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let active = true;
+
+    async function syncAutostartPreference() {
+      try {
+        setIsSyncingAutostart(true);
+        const enabled = await getAutostartState();
+        if (!active) return;
+
+        setSettingsPreferences((current) => {
+          if (current.startWithWindows === enabled) {
+            return current;
+          }
+
+          const next = { ...current, startWithWindows: enabled };
+          persistSettingsPreferences(next);
+          return next;
+        });
+      } catch (error) {
+        console.error("Could not sync autostart state.", error);
+      } finally {
+        if (active) {
+          setIsSyncingAutostart(false);
+        }
+      }
+    }
+
+    void syncAutostartPreference();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const filteredCredentials = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return credentials;
@@ -321,19 +363,46 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     void loadDashboard();
   }, []);
 
+  // Real-time security updates - refresh every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeSection === "security" || activeSection === "overview") {
+        void refreshSecurityData();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [activeSection]);
+
+  // Refresh security data after important actions
+  const refreshSecurityData = async () => {
+    try {
+      const [nextOverview, nextSecurityOverview] = await Promise.all([
+        dashboardApi.getOverview(),
+        dashboardApi.getSecurityOverview(),
+      ]);
+      setOverview(nextOverview);
+      setSecurityOverview(nextSecurityOverview);
+    } catch (error) {
+      console.error("Failed to refresh security data:", error);
+    }
+  };
+
   async function loadDashboard() {
     try {
       setIsLoading(true);
-      const [profile, nextOverview, nextActivity, nextSessions] = await Promise.all([
+      const [profile, nextOverview, nextActivity, nextSessions, nextSecurityOverview] = await Promise.all([
         dashboardApi.getMe(),
         dashboardApi.getOverview(),
         dashboardApi.getActivity(),
         dashboardApi.getSessions(),
+        dashboardApi.getSecurityOverview(),
       ]);
       setMe(profile);
       setOverview(nextOverview);
       setActivity(nextActivity.activity);
       setSessions(nextSessions.sessions);
+      setSecurityOverview(nextSecurityOverview);
       if (profile.vaultConfigured) {
         const envelope = await dashboardApi.getVaultEnvelope();
         setVaultEnvelope(envelope.vault);
@@ -360,6 +429,21 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     const encrypted = await dashboardApi.getCredentials();
     const decrypted = await Promise.all(encrypted.credentials.map((credential) => decryptCredential(secret, credential)));
     setCredentials(decrypted);
+    
+    // Send password health analysis to backend if vault is unlocked
+    if (secret && decrypted.length > 0) {
+      try {
+        const analysis = analyzeCredentials(decrypted);
+        await dashboardApi.sendPasswordHealth({
+          weakPasswordCount: analysis.weakCount,
+          reusedPasswordCount: analysis.reusedCount,
+          oldPasswordCount: 0, // TODO: Calculate from timestamps if available
+          totalPasswords: decrypted.length,
+        });
+      } catch (error) {
+        console.error("Failed to send password health analysis:", error);
+      }
+    }
   }
 
   async function handleSetupVault(event: FormEvent) {
@@ -382,6 +466,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       setMe((current) => ({ ...current, vaultConfigured: true }));
       await loadCredentials(created.secret);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: "Vault created and unlocked.", tone: "success" });
     } catch (error) {
       setNotice({ message: friendlyError(error), tone: "error" });
@@ -402,6 +487,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       await dashboardApi.recordVaultActivity("unlocked");
       await loadCredentials(secret);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: "Vault unlocked.", tone: "success" });
     } catch {
       setNotice({ message: "Vault password is incorrect.", tone: "error" });
@@ -429,6 +515,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       await dashboardApi.recordVaultActivity("unlocked");
       await loadCredentials(recovered.secret);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: "Vault password reset and vault unlocked.", tone: "success" });
     } catch {
       setNotice({ message: "Recovery key could not unlock this vault.", tone: "error" });
@@ -510,6 +597,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       setTagsInput("");
       setShowEntryPassword(false);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: editingCredential ? "Password entry updated." : "Password entry added.", tone: "success" });
     } catch (error) {
       setEntryFormError(friendlyError(error));
@@ -525,6 +613,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       setCredentials((current) => current.filter((credential) => credential.id !== id));
       setDeleteId(null);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: "Password entry deleted.", tone: "success" });
     } catch (error) {
       setNotice({ message: friendlyError(error), tone: "error" });
@@ -618,6 +707,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       setPasswordModalError("");
       setPasswordModalOpen(false);
       await refreshActivity();
+      await refreshSecurityData();
       setNotice({ message: "Account password changed. Other sessions were revoked.", tone: "success" });
     } catch (error) {
       setPasswordModalError(friendlyError(error));
@@ -652,6 +742,27 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       });
     } finally {
       setIsCheckingForUpdates(false);
+    }
+  }
+
+  async function handleStartWithWindowsChange(enabled: boolean) {
+    const previousValue = settingsPreferences.startWithWindows;
+
+    updateSettingsPreference("startWithWindows", enabled);
+    setIsSyncingAutostart(true);
+
+    try {
+      await setAutostartState(enabled);
+      const actualState = await getAutostartState();
+      updateSettingsPreference("startWithWindows", actualState);
+    } catch (error) {
+      updateSettingsPreference("startWithWindows", previousValue);
+      setNotice({
+        message: `Could not ${enabled ? "enable" : "disable"} start with Windows. ${friendlyError(error)}`,
+        tone: "error",
+      });
+    } finally {
+      setIsSyncingAutostart(false);
     }
   }
 
@@ -740,6 +851,71 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     });
   }
 
+  function handleQuickActionToggle(action: QuickAction, isChecked: boolean) {
+    if (isChecked) {
+      // Add action if under limit
+      if (settingsPreferences.quickActions.length < 3) {
+        updateSettingsPreference("quickActions", [...settingsPreferences.quickActions, action]);
+      }
+    } else {
+      // Remove action
+      updateSettingsPreference("quickActions", settingsPreferences.quickActions.filter(a => a !== action));
+    }
+  }
+
+  function executeQuickAction(action: QuickAction) {
+    switch (action) {
+      case "add-password":
+        setActiveSection("vault");
+        if (vaultUnlocked) beginNewEntry();
+        break;
+      case "search-vault":
+        setActiveSection("vault");
+        break;
+      case "lock-vault":
+        handleLockVault();
+        break;
+      case "open-security":
+        setActiveSection("security");
+        break;
+      case "open-activity":
+        setActiveSection("activity");
+        break;
+      case "check-updates":
+        handleCheckForUpdates();
+        break;
+      case "manage-sessions":
+        setActiveSection("sessions");
+        break;
+      case "export-data":
+        setActiveSection("settings");
+        setActiveSettingsCategory("vault");
+        break;
+    }
+  }
+
+  function handleExportActivity() {
+    const activityData = activity.map(item => ({
+      timestamp: item.timestamp,
+      type: item.type,
+      message: item.message,
+      status: item.status
+    }));
+    
+    const dataStr = JSON.stringify(activityData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `securelocker-activity-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    setNotice({ message: "Activity logs exported successfully.", tone: "success" });
+  }
+
   function openSettingsConfirmation(action: SettingsConfirmAction) {
     setSettingsConfirmAction(action);
     setSettingsConfirmPassword("");
@@ -791,6 +967,106 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function handle2faEnable(event?: React.MouseEvent) {
+    // Prevent any default behavior AND stop propagation
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    try {
+      // Set flow state FIRST - this keeps the modal open
+      setTwoFactorFlow("enabling");
+      setTwoFaCode("");
+      setTwoFaError("");
+      
+      setBusyAction("2fa-send-code");
+      
+      // Send verification code
+      await dashboardApi.send2faEnableCode();
+      
+      setNotice({ message: "Verification code sent to your email.", tone: "success" });
+      
+      // Keep modal open - do NOT reset twoFactorFlow here
+      setBusyAction(null);
+    } catch (error) {
+      setTwoFaError(friendlyError(error));
+      // Only close on error
+      setTwoFactorFlow("idle");
+      setBusyAction(null);
+    }
+  }
+
+  async function handle2faDisable(event?: React.MouseEvent) {
+    // Prevent any default behavior AND stop propagation
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    try {
+      // Set flow state FIRST - this keeps the modal open
+      setTwoFactorFlow("disabling");
+      setTwoFaCode("");
+      setTwoFaError("");
+      
+      setBusyAction("2fa-send-code");
+      
+      // Send verification code
+      await dashboardApi.send2faDisableCode();
+      
+      setNotice({ message: "Verification code sent to your email.", tone: "success" });
+      
+      // Keep modal open - do NOT reset twoFactorFlow here
+      setBusyAction(null);
+    } catch (error) {
+      setTwoFaError(friendlyError(error));
+      // Only close on error
+      setTwoFactorFlow("idle");
+      setBusyAction(null);
+    }
+  }
+
+  async function handle2faVerifyCode(event: FormEvent) {
+    event.preventDefault();
+    if (!twoFaCode.trim()) {
+      setTwoFaError("Code is required.");
+      return;
+    }
+
+    try {
+      setBusyAction("2fa-verify");
+      
+      if (twoFactorFlow === "enabling") {
+        await dashboardApi.verify2faEnableCode(twoFaCode);
+        setMe((current) => ({ ...current, email2faEnabled: true }));
+        await refreshSecurityData();
+        setNotice({ message: "Two-factor authentication enabled.", tone: "success" });
+      } else if (twoFactorFlow === "disabling") {
+        await dashboardApi.verify2faDisableCode(twoFaCode);
+        setMe((current) => ({ ...current, email2faEnabled: false }));
+        await refreshSecurityData();
+        setNotice({ message: "Two-factor authentication disabled.", tone: "success" });
+      }
+      
+      // Only close modal on successful verification
+      setTwoFactorFlow("idle");
+      setTwoFaCode("");
+      setTwoFaError("");
+    } catch (error) {
+      setTwoFaError(friendlyError(error));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function close2faModal() {
+    if (busyAction === "2fa-verify") return; // Prevent closing during verification
+    setTwoFactorFlow("idle");
+    setTwoFaCode("");
+    setTwoFaError("");
   }
 
   function openPasswordModal() {
@@ -937,6 +1213,22 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           ) : null}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {twoFactorFlow !== "idle" ? (
+            <motion.div
+              animate={{ opacity: 1 }}
+              aria-labelledby="2fa-modal-title"
+              aria-modal="true"
+              className="password-modal"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              role="dialog"
+            >
+              {render2faModal()}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
         <AnimatePresence>{settingsConfirmAction ? renderSettingsConfirmation() : null}</AnimatePresence>
 
         {isLoading ? (
@@ -972,37 +1264,47 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           <MetricCard label="Last activity" value={formatDate(lastActivity)} />
           <MetricCard
             label="Security status"
-            value={vaultUnlocked ? (securityAnalysis.status === "secure" ? "Secure" : "Warning") : me.vaultConfigured ? "Vault locked" : "Setup required"}
-            tone={vaultUnlocked && securityAnalysis.status === "secure" ? "success" : "warning"}
+            value={overview?.securityStatus === "ready" ? "Secure" : overview?.securityStatus === "setup_required" ? "Setup required" : overview?.securityStatus === "at_risk" ? "At risk" : "Loading..."}
+            tone={overview?.securityStatus === "ready" ? "success" : overview?.securityStatus === "at_risk" ? "warning" : "warning"}
           />
         </div>
 
         <div className="dashboard-grid dashboard-grid--two">
           <Panel title="Quick actions">
             <div className="quick-actions">
-              <Button
-                onClick={() => {
-                  setActiveSection("vault");
-                  if (vaultUnlocked) beginNewEntry();
-                }}
-              >
-                <Plus aria-hidden="true" />
-                Add password
-              </Button>
-              <Button onClick={() => setActiveSection("vault")} variant="ghost">
-                <Search aria-hidden="true" />
-                Search vault
-              </Button>
-              <Button disabled={!vaultUnlocked} onClick={handleLockVault} variant="ghost">
-                <Lock aria-hidden="true" />
-                Lock vault
-              </Button>
+              {settingsPreferences.quickActions.map((action) => {
+                const actionConfig = {
+                  "add-password": { icon: Plus, label: "Add password", disabled: false },
+                  "search-vault": { icon: Search, label: "Search vault", disabled: false },
+                  "lock-vault": { icon: Lock, label: "Lock vault", disabled: !vaultUnlocked },
+                  "open-security": { icon: ShieldCheck, label: "Open Security Center", disabled: false },
+                  "open-activity": { icon: Activity, label: "Open Activity Logs", disabled: false },
+                  "check-updates": { icon: Download, label: "Check for updates", disabled: !isTauriRuntime() },
+                  "manage-sessions": { icon: MonitorSmartphone, label: "Manage sessions", disabled: false },
+                  "export-data": { icon: Clipboard, label: "Export encrypted data", disabled: false },
+                }[action];
+
+                if (!actionConfig) return null;
+
+                const Icon = actionConfig.icon;
+                return (
+                  <Button
+                    key={action}
+                    disabled={actionConfig.disabled}
+                    onClick={() => executeQuickAction(action)}
+                    variant="ghost"
+                  >
+                    <Icon aria-hidden="true" />
+                    {actionConfig.label}
+                  </Button>
+                );
+              })}
             </div>
           </Panel>
           <Panel title="Vault state">
-            <StatusLine label="Email verification" ok={me.user.emailVerified} />
-            <StatusLine label="Security questions" ok={me.securityQuestionsConfigured} />
-            <StatusLine label="Password vault" ok={me.vaultConfigured} />
+            <StatusLine label="Email verification" ok={overview?.emailVerified ?? false} />
+            <StatusLine label="Security questions" ok={overview?.securityQuestionsConfigured ?? false} />
+            <StatusLine label="Password vault" ok={overview?.vaultConfigured ?? false} />
           </Panel>
         </div>
       </>
@@ -1076,7 +1378,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                 ? credential.password
                 : settingsPreferences.hideSensitiveInformation
                   ? maskText(credential.password, "password")
-                  : "••••••••••••";
+                  : "\u2022".repeat(12);
 
               return (
                 <article className="credential-card" key={credential.id}>
@@ -1380,6 +1682,65 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     );
   }
 
+  function render2faModal() {
+    const isEnabling = twoFactorFlow === "enabling";
+    
+    return (
+      <motion.form
+        animate={{ scale: 1, y: 0 }}
+        className="password-modal__panel"
+        exit={{ scale: 0.98, y: 10 }}
+        initial={{ scale: 0.98, y: 10 }}
+        onSubmit={handle2faVerifyCode}
+      >
+        <header className="password-modal__header">
+          <h2 id="2fa-modal-title">
+            {isEnabling ? "Enable two-factor authentication" : "Disable two-factor authentication"}
+          </h2>
+          <button
+            aria-label="Close 2FA form"
+            disabled={busyAction === "2fa-verify"}
+            onClick={close2faModal}
+            type="button"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="password-modal__body">
+          {twoFaError ? <div className="entry-form-error">{twoFaError}</div> : null}
+          <p style={{ marginBottom: "16px", color: "#bed0dc", fontSize: "14px" }}>
+            {isEnabling
+              ? "Enter the 6-digit code sent to your email to enable two-factor authentication."
+              : "Enter the 6-digit code sent to your email to confirm disabling two-factor authentication."}
+          </p>
+          <TextField
+            autoComplete="off"
+            id="2fa-code"
+            inputMode="numeric"
+            label="Verification code"
+            maxLength={6}
+            onChange={setTwoFaCode}
+            placeholder="000000"
+            value={twoFaCode}
+          />
+        </div>
+        <footer className="password-modal__footer">
+          <Button loading={busyAction === "2fa-verify"} type="submit">
+            Verify code
+          </Button>
+          <Button
+            disabled={busyAction === "2fa-verify"}
+            onClick={close2faModal}
+            type="button"
+            variant="ghost"
+          >
+            Cancel
+          </Button>
+        </footer>
+      </motion.form>
+    );
+  }
+
   function renderSettingsConfirmation() {
     if (!settingsConfirmAction) return null;
 
@@ -1460,18 +1821,118 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   }
 
   function renderSecurityCenter() {
+    if (isLoading) {
+      return (
+        <div className="dashboard-grid dashboard-grid--two">
+          <Panel title="Security score">
+            <div className="score-ring">
+              <span>--</span>
+            </div>
+            <p className="panel-copy">Loading security analysis...</p>
+          </Panel>
+        </div>
+      );
+    }
+
+    if (!securityOverview) {
+      return (
+        <div className="dashboard-grid dashboard-grid--two">
+          <Panel title="Security score">
+            <div className="score-ring">
+              <span>--</span>
+            </div>
+            <p className="panel-copy">Unable to load security data.</p>
+          </Panel>
+        </div>
+      );
+    }
+
+    // Get security status color and text
+    const getSecurityStatusInfo = (status: string) => {
+      switch (status) {
+        case "ready":
+          return { color: "success", text: "Secure" };
+        case "setup_required":
+          return { color: "warning", text: "Setup required" };
+        case "at_risk":
+          return { color: "error", text: "At risk" };
+        default:
+          return { color: "neutral", text: "Unknown" };
+      }
+    };
+
+    const statusInfo = getSecurityStatusInfo(securityOverview.securityStatus);
+
     return (
       <div className="dashboard-grid dashboard-grid--two">
         <Panel title="Security score">
           <div className="score-ring">
-            <span>{vaultUnlocked ? securityAnalysis.score : "--"}</span>
+            <span>{securityOverview.securityScore}</span>
           </div>
-          <p className="panel-copy">{vaultUnlocked ? "Score is calculated locally from decrypted vault entries." : "Unlock the vault to calculate password health."}</p>
+          <p className="panel-copy">
+            Real-time security score: {securityOverview.securityScore}/100 • {statusInfo.text}
+          </p>
+          {securityOverview.lastSecurityScan && (
+            <small className="panel-copy">Last scan: {formatDate(securityOverview.lastSecurityScan)}</small>
+          )}
+        </Panel>
+        <Panel title="Security configuration">
+          <StatusLine label="Email verified" ok={securityOverview.emailVerified} value={securityOverview.emailVerified ? "Verified" : "Required"} />
+          <StatusLine label="Security questions" ok={securityOverview.securityQuestionsConfigured} value={securityOverview.securityQuestionsConfigured ? "Configured" : "Required"} />
+          <StatusLine label="Password vault" ok={securityOverview.vaultConfigured} value={securityOverview.vaultConfigured ? "Created" : "Required"} />
+          <StatusLine label="Email 2FA" ok={securityOverview.email2faEnabled} value={securityOverview.email2faEnabled ? "Enabled" : "Required"} />
         </Panel>
         <Panel title="Password findings">
-          <StatusLine label="Weak passwords" ok={vaultUnlocked && securityAnalysis.weakCount === 0} value={vaultUnlocked ? String(securityAnalysis.weakCount) : "Locked"} />
-          <StatusLine label="Reused passwords" ok={vaultUnlocked && securityAnalysis.reusedCount === 0} value={vaultUnlocked ? String(securityAnalysis.reusedCount) : "Locked"} />
-          <StatusLine label="Vault encryption" ok={me.vaultConfigured} value={me.vaultConfigured ? "Enabled" : "Required"} />
+          <StatusLine 
+            label="Weak passwords" 
+            ok={vaultUnlocked && securityOverview.weakPasswordCount === 0} 
+            value={vaultUnlocked ? String(securityOverview.weakPasswordCount) : "Unlock vault to scan"} 
+          />
+          <StatusLine 
+            label="Reused passwords" 
+            ok={vaultUnlocked && securityOverview.reusedPasswordCount === 0} 
+            value={vaultUnlocked ? String(securityOverview.reusedPasswordCount) : "Unlock vault to scan"} 
+          />
+          <StatusLine 
+            label="Old passwords" 
+            ok={vaultUnlocked && securityOverview.oldPasswordCount === 0} 
+            value={vaultUnlocked ? String(securityOverview.oldPasswordCount) : "Unlock vault to scan"} 
+          />
+          <StatusLine label="Vault encryption" ok={securityOverview.vaultConfigured} value={securityOverview.vaultEncryptionStatus === "enabled" ? "Enabled" : "Required"} />
+        </Panel>
+        <Panel title="Trust & Access">
+          <StatusLine label="Trusted sessions" ok={securityOverview.trustedSessionCount <= 5} value={`${securityOverview.trustedSessionCount} active`} />
+          <StatusLine label="Trusted IPs" ok={securityOverview.trustedIpCount <= 3} value={`${securityOverview.trustedIpCount} locations`} />
+          <StatusLine label="Total passwords" ok={securityOverview.totalPasswords > 0} value={String(securityOverview.totalPasswords)} />
+        </Panel>
+        {securityOverview.recommendations && securityOverview.recommendations.length > 0 ? (
+          <Panel title="Recommendations">
+            <div className="recommendations-list">
+              {securityOverview.recommendations.map((recommendation, index) => (
+                <div key={index} className="recommendation-item">
+                  <span>{recommendation}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        ) : (
+          <Panel title="Recommendations">
+            <div className="recommendations-list">
+              <div className="recommendation-item">
+                <span>🎉 Excellent security posture! All recommended protections are enabled.</span>
+              </div>
+            </div>
+          </Panel>
+        )}
+        <Panel title="Score breakdown">
+          <div className="score-breakdown">
+            <StatusLine label="Email verified" ok={securityOverview.scoreComponents.emailVerified > 0} value={`${securityOverview.scoreComponents.emailVerified}/20`} />
+            <StatusLine label="Two-factor auth" ok={securityOverview.scoreComponents.email2faEnabled > 0} value={`${securityOverview.scoreComponents.email2faEnabled}/20`} />
+            <StatusLine label="Security questions" ok={securityOverview.scoreComponents.securityQuestionsConfigured > 0} value={`${securityOverview.scoreComponents.securityQuestionsConfigured}/20`} />
+            <StatusLine label="Vault configured" ok={securityOverview.scoreComponents.vaultConfigured > 0} value={`${securityOverview.scoreComponents.vaultConfigured}/20`} />
+            <StatusLine label="Trusted devices" ok={securityOverview.scoreComponents.trustedDevices > 0} value={`${securityOverview.scoreComponents.trustedDevices}/10`} />
+            <StatusLine label="Trusted IPs" ok={securityOverview.scoreComponents.trustedIps > 0} value={`${securityOverview.scoreComponents.trustedIps}/10`} />
+          </div>
         </Panel>
       </div>
     );
@@ -1535,9 +1996,8 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       { id: "general", label: "General", icon: Settings },
       { id: "security", label: "Security", icon: ShieldCheck },
       { id: "vault", label: "Vault", icon: KeyRound },
+      { id: "devices", label: "Sessions & Devices", icon: MonitorSmartphone },
       { id: "activity", label: "Activity Logs", icon: Activity },
-      { id: "sessions", label: "Sessions & Devices", icon: MonitorSmartphone },
-      { id: "recovery", label: "Recovery & Settings", icon: RotateCcwKey },
       { id: "account", label: "Account", icon: UserRound },
     ];
 
@@ -1594,22 +2054,212 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
 
                 <section className="settings-panel">
                   <div className="settings-panel__header">
-                    <h3>Interface</h3>
+                    <h3>Startup</h3>
                   </div>
                   <div className="settings-row">
                     <div className="settings-row__label">
-                      <span>Compact vault cards</span>
+                      <span>Check for updates on startup</span>
                     </div>
                     <div className="settings-row__control">
                       <label className="settings-toggle">
                         <input
-                          checked={settingsPreferences.compactVault}
-                          onChange={(event) => updateSettingsPreference("compactVault", event.currentTarget.checked)}
+                          checked={settingsPreferences.checkForUpdatesOnStartup}
+                          onChange={(event) => updateSettingsPreference("checkForUpdatesOnStartup", event.currentTarget.checked)}
                           type="checkbox"
                         />
                         <span className="settings-toggle__slider"></span>
                       </label>
                     </div>
+                  </div>
+                </section>
+
+                
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Quick Actions</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__control">
+                      <div className="quick-actions-chips">
+                        {[
+                          { id: "add-password", label: "Add password", icon: Plus },
+                          { id: "search-vault", label: "Search vault", icon: Search },
+                          { id: "lock-vault", label: "Lock vault", icon: Lock },
+                          { id: "open-security", label: "Security Center", icon: ShieldCheck },
+                          { id: "open-activity", label: "Activity Logs", icon: Activity },
+                          { id: "check-updates", label: "Check updates", icon: Download },
+                          { id: "manage-sessions", label: "Sessions", icon: MonitorSmartphone },
+                          { id: "export-data", label: "Export Data", icon: Clipboard },
+                        ].map((action) => {
+                          const Icon = action.icon;
+                          const isSelected = settingsPreferences.quickActions.includes(action.id as any);
+                          const isDisabled = !isSelected && settingsPreferences.quickActions.length >= 3;
+                          
+                          return (
+                            <button
+                              key={action.id}
+                              className={clsx("quick-action-chip", isSelected && "quick-action-chip--selected", isDisabled && "quick-action-chip--disabled")}
+                              disabled={isDisabled}
+                              onClick={() => !isDisabled && handleQuickActionToggle(action.id as any, !isSelected)}
+                              type="button"
+                            >
+                              <Icon aria-hidden="true" />
+                              <span>{action.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {settingsPreferences.quickActions.length >= 3 && (
+                        <div className="settings-row">
+                          <div className="settings-row__label">
+                            <small className="settings-help settings-help--error">Maximum 3 quick actions allowed</small>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </>
+            )}
+
+            {activeSettingsCategory === "security" && (
+              <>
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Login Alerts</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Login alerts</span>
+                      <small className="settings-help">Send an email when a new or suspicious sign-in happens</small>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={securitySettings?.loginAlerts ?? true}
+                          onChange={async (event) => {
+                            const enabled = event.currentTarget.checked;
+                            try {
+                              await updateSecuritySettings({ loginAlerts: enabled });
+                              setNotice({
+                                message: enabled ? "Login alerts enabled." : "Login alerts disabled.",
+                                tone: "success"
+                              });
+                              // Update local state
+                              setSecuritySettings((prev: SecuritySettings | null) => prev ? { ...prev, loginAlerts: enabled } : null);
+                            } catch (error) {
+                              setNotice({
+                                message: "Failed to update login alerts setting.",
+                                tone: "error"
+                              });
+                            }
+                          }}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Two-Factor Authentication</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <div>
+                        <span>Email 2FA</span>
+                        <small>Require an email verification code at every login</small>
+                      </div>
+                    </div>
+                    <div className="settings-row__control">
+                      {me.email2faEnabled ? (
+                        <div className="settings-2fa-enabled">
+                          <CheckCircle2 aria-hidden="true" />
+                          <span>Enabled</span>
+                          <Button
+                            loading={busyAction === "2fa-send-code" && twoFactorFlow === "disabling"}
+                            onClick={(e) => void handle2faDisable(e)}
+                            type="button"
+                            variant="ghost"
+                          >
+                            Disable
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          loading={busyAction === "2fa-send-code" && twoFactorFlow === "enabling"}
+                          onClick={(e) => void handle2faEnable(e)}
+                          type="button"
+                          variant="ghost"
+                        >
+                          Enable
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Security Settings</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Require password confirmation</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={settingsPreferences.requirePasswordConfirmation}
+                          onChange={(event) => updateSettingsPreference("requirePasswordConfirmation", event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Auto-lock vault (minutes)</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <input
+                        className="settings-input"
+                        inputMode="numeric"
+                        min="0"
+                        onChange={(event) => updateSettingsPreference("autoLockMinutes", event.target.value)}
+                        type="number"
+                        value={settingsPreferences.autoLockMinutes}
+                      />
+                    </div>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Clipboard clear time (seconds)</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <input
+                        className="settings-input"
+                        inputMode="numeric"
+                        min="5"
+                        onChange={(event) => updateSettingsPreference("clipboardClearSeconds", event.target.value)}
+                        type="number"
+                        value={settingsPreferences.clipboardClearSeconds}
+                      />
+                    </div>
+                  </div>
+                </section>
+              </>
+            )}
+
+            
+            {activeSettingsCategory === "vault" && (
+              <>
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Vault Display</h3>
                   </div>
                   <div className="settings-row">
                     <div className="settings-row__label">
@@ -1626,135 +2276,147 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                       </label>
                     </div>
                   </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Compact vault cards</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={settingsPreferences.compactVault}
+                          onChange={(event) => updateSettingsPreference("compactVault", event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Password Generator</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Default password length</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <input
+                        className="settings-input"
+                        inputMode="numeric"
+                        min="8"
+                        max="64"
+                        onChange={(event) => updateSettingsPreference("passwordLength", event.target.value)}
+                        type="number"
+                        value={settingsPreferences.passwordLength}
+                      />
+                    </div>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Include numbers</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={settingsPreferences.includeNumbers}
+                          onChange={(event) => updateSettingsPreference("includeNumbers", event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Include symbols</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={settingsPreferences.includeSymbols}
+                          onChange={(event) => updateSettingsPreference("includeSymbols", event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Default Entry Settings</h3>
+                  </div>
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Default entry category</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <select
+                        className="settings-select"
+                        onChange={(event) => updateSettingsPreference("defaultCategory", event.currentTarget.value)}
+                        value={settingsPreferences.defaultCategory}
+                      >
+                        <option value="Social">Social</option>
+                        <option value="Banking">Banking</option>
+                        <option value="Gaming">Gaming</option>
+                        <option value="Work">Work</option>
+                        <option value="Shopping">Shopping</option>
+                        <option value="Personal">Personal</option>
+                        <option value="Custom">Custom</option>
+                      </select>
+                    </div>
+                  </div>
                 </section>
               </>
             )}
 
-            {activeSettingsCategory === "security" && (
-              <section className="settings-panel">
-                <div className="settings-panel__header">
-                  <h3>Security Preferences</h3>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Auto-lock minutes</span>
+            {activeSettingsCategory === "devices" && (
+              <>
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Device Settings</h3>
                   </div>
-                  <div className="settings-row__control">
-                    <input
-                      className="settings-input"
-                      id="settings-auto-lock"
-                      inputMode="numeric"
-                      min={0}
-                      onChange={(event) => updateSettingsPreference("autoLockMinutes", event.target.value)}
-                      type="number"
-                      value={settingsPreferences.autoLockMinutes}
-                    />
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Start SecureLocker with Windows</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <label className="settings-toggle">
+                        <input
+                          checked={settingsPreferences.startWithWindows}
+                          disabled={!isTauriRuntime() || isSyncingAutostart}
+                          onChange={(event) => void handleStartWithWindowsChange(event.currentTarget.checked)}
+                          type="checkbox"
+                        />
+                        <span className="settings-toggle__slider"></span>
+                      </label>
+                    </div>
                   </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Clipboard clear seconds</span>
-                  </div>
-                  <div className="settings-row__control">
-                    <input
-                      className="settings-input"
-                      id="settings-clipboard-clear"
-                      inputMode="numeric"
-                      min={5}
-                      onChange={(event) => updateSettingsPreference("clipboardClearSeconds", event.target.value)}
-                      type="number"
-                      value={settingsPreferences.clipboardClearSeconds}
-                    />
-                  </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Require password confirmation</span>
-                  </div>
-                  <div className="settings-row__control">
-                    <label className="settings-toggle">
-                      <input
-                        checked={settingsPreferences.requirePasswordConfirmation}
-                        onChange={(event) => updateSettingsPreference("requirePasswordConfirmation", event.currentTarget.checked)}
-                        type="checkbox"
-                      />
-                      <span className="settings-toggle__slider"></span>
-                    </label>
-                  </div>
-                </div>
-              </section>
-            )}
+                </section>
 
-            {activeSettingsCategory === "vault" && (
-              <section className="settings-panel">
-                <div className="settings-panel__header">
-                  <h3>Vault Defaults</h3>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Generated password length</span>
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Trusted Devices</h3>
                   </div>
-                  <div className="settings-row__control">
-                    <input
-                      className="settings-input"
-                      id="settings-password-length"
-                      inputMode="numeric"
-                      min={10}
-                      onChange={(event) => updateSettingsPreference("passwordLength", event.target.value)}
-                      type="number"
-                      value={settingsPreferences.passwordLength}
-                    />
+                  <div className="settings-row">
+                    <div className="settings-row__label">
+                      <span>Active sessions</span>
+                    </div>
+                    <div className="settings-row__control">
+                      <span className="settings-value">{sessions.length}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Default category</span>
+                  <div className="settings-actions">
+                    <Button onClick={() => setActiveSection("sessions")} variant="ghost">
+                      <MonitorSmartphone aria-hidden="true" />
+                      Manage sessions
+                    </Button>
                   </div>
-                  <div className="settings-row__control">
-                    <select
-                      className="settings-select"
-                      onChange={(event) => updateSettingsPreference("defaultCategory", event.currentTarget.value)}
-                      value={settingsPreferences.defaultCategory}
-                    >
-                      {categories.map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Include numbers in generated passwords</span>
-                  </div>
-                  <div className="settings-row__control">
-                    <label className="settings-toggle">
-                      <input
-                        checked={settingsPreferences.includeNumbers}
-                        onChange={(event) => updateSettingsPreference("includeNumbers", event.currentTarget.checked)}
-                        type="checkbox"
-                      />
-                      <span className="settings-toggle__slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row__label">
-                    <span>Include symbols in generated passwords</span>
-                  </div>
-                  <div className="settings-row__control">
-                    <label className="settings-toggle">
-                      <input
-                        checked={settingsPreferences.includeSymbols}
-                        onChange={(event) => updateSettingsPreference("includeSymbols", event.currentTarget.checked)}
-                        type="checkbox"
-                      />
-                      <span className="settings-toggle__slider"></span>
-                    </label>
-                  </div>
-                </div>
-              </section>
+                </section>
+              </>
             )}
 
             {activeSettingsCategory === "activity" && (
@@ -1791,92 +2453,16 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                     <Activity aria-hidden="true" />
                     Refresh activity
                   </Button>
+                  <Button onClick={() => handleExportActivity()} variant="ghost">
+                    <Clipboard aria-hidden="true" />
+                    Export logs
+                  </Button>
                   <Button onClick={() => openSettingsConfirmation("clear-logs")} variant="ghost">
                     <Trash2 aria-hidden="true" />
                     Clear logs
                   </Button>
                 </div>
               </section>
-            )}
-
-            {activeSettingsCategory === "sessions" && (
-              <section className="settings-panel">
-                <div className="settings-panel__header">
-                  <h3>Active Sessions & Devices</h3>
-                </div>
-                {sessions.length === 0 ? (
-                  <div className="empty-state">No active sessions were returned by SecureLocker.</div>
-                ) : (
-                  <div className="settings-session-list">
-                    {sessions.map((session) => (
-                      <article className="settings-session-row" key={session.id}>
-                        <MonitorSmartphone aria-hidden="true" />
-                        <div>
-                          <strong>{formatDevice(session.userAgent)}</strong>
-                          <span>{session.ipAddress ?? "Unknown IP"}</span>
-                          <small>Last access {formatDate(session.lastUsedAt)}</small>
-                        </div>
-                        {session.current ? (
-                          <span className="current-badge">Current</span>
-                        ) : (
-                          <Button loading={busyAction === `session-${session.id}`} onClick={() => void handleRevokeSession(session.id)} variant="ghost">
-                            Revoke
-                          </Button>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
-
-            {activeSettingsCategory === "recovery" && (
-              <>
-                <section className="settings-panel">
-                  <div className="settings-panel__header">
-                    <h3>Recovery Status</h3>
-                  </div>
-                  <StatusLine label="Email verified" ok={me.user.emailVerified} />
-                  <StatusLine label="Security questions" ok={me.securityQuestionsConfigured} />
-                  <StatusLine label="Vault recovery key" ok={me.vaultConfigured} value={me.vaultConfigured ? "Configured" : "Required"} />
-                </section>
-
-                <section className="settings-panel">
-                  <div className="settings-panel__header">
-                    <h3>Data Export</h3>
-                  </div>
-                  <div className="settings-row">
-                    <div className="settings-row__label">
-                      <span>Export format</span>
-                    </div>
-                    <div className="settings-row__control">
-                      <select
-                        className="settings-select"
-                        onChange={(event) => updateSettingsPreference("exportFormat", event.currentTarget.value)}
-                        value={settingsPreferences.exportFormat}
-                      >
-                        <option value="encrypted-json">Encrypted JSON</option>
-                        <option value="vault-envelope">Vault envelope only</option>
-                        <option value="activity-summary">Activity summary</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="settings-row">
-                    <div className="settings-row__label">
-                      <span>Vault records</span>
-                    </div>
-                    <div className="settings-row__control">
-                      <span className="settings-value">{credentials.length}</span>
-                    </div>
-                  </div>
-                  <div className="settings-actions">
-                    <Button onClick={() => openSettingsConfirmation("export-data")}>
-                      <Clipboard aria-hidden="true" />
-                      Request encrypted export
-                    </Button>
-                  </div>
-                </section>
-              </>
             )}
 
             {activeSettingsCategory === "account" && (
@@ -1892,7 +2478,6 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                   <StatusLine label="Protected session" ok={Boolean(me.activeSessionId)} value="Active" />
                   <StatusLine label="Recovery questions" ok={me.securityQuestionsConfigured} />
                 </div>
-
                 <div className="settings-panel__header" style={{ marginTop: '2rem' }}>
                   <h3>Security</h3>
                 </div>
@@ -1902,7 +2487,6 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                     Change password
                   </Button>
                 </div>
-
                 <div className="settings-panel__header" style={{ marginTop: '2rem' }}>
                   <h3>Danger Zone</h3>
                 </div>
@@ -1926,38 +2510,6 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   }
 }
 
-function MetricCard({ label, tone = "neutral", value }: { label: string; tone?: "neutral" | "success" | "warning"; value: string }) {
-  return (
-    <article className={clsx("metric-card", `metric-card--${tone}`)}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
-}
 
-function Panel({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <section className="dashboard-panel">
-      <h2>{title}</h2>
-      {children}
-    </section>
-  );
-}
 
-function StatusLine({ label, ok, value }: { label: string; ok: boolean; value?: string }) {
-  return (
-    <div className="status-line">
-      {ok ? <CheckCircle2 aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
-      <span>{label}</span>
-      <strong>{value ?? (ok ? "Ready" : "Attention")}</strong>
-    </div>
-  );
-}
 
-function IconButton({ children, label, onClick }: { children: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button aria-label={label} className="icon-button" onClick={onClick} title={label} type="button">
-      {children}
-    </button>
-  );
-}

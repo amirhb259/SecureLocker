@@ -13,6 +13,7 @@ model User {
   email                       String                       @unique @db.VarChar(320)
   passwordHash                String                       @map("password_hash")
   emailVerifiedAt             DateTime?                    @map("email_verified_at")
+  email2faEnabled             Boolean                      @default(false) @map("email_2fa_enabled")
   accountStatus               UserAccountStatus            @default(ACTIVE) @map("account_status")
   createdAt                   DateTime                     @default(now()) @map("created_at")
   updatedAt                   DateTime                     @updatedAt @map("updated_at")
@@ -35,6 +36,13 @@ model User {
   vaultActivities             VaultActivity[]
   vaultCredentials            VaultCredential[]
   securityQuestionAnswers     UserSecurityQuestion[]
+  email2faCodes               Email2faCode[]
+  email2faPendingSessions     Email2faPendingSession[]
+  email2faAuditLogs           Email2faAuditLog[]
+  securitySettings            SecuritySettings?
+  trustedDevices              TrustedDevice[]
+  pendingLoginApprovals       PendingLoginApproval[]
+  securityLogs                SecurityLog[]
 
   @@map("users")
 }
@@ -365,3 +373,144 @@ enum UserAccountStatus {
   SCHEDULED_DELETION
   DEACTIVATED
 }
+
+model Email2faCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @map("code_hash") @db.VarChar(128)
+  purpose   String    @db.VarChar(32)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_2fa_codes")
+}
+
+model Email2faPendingSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  sessionTokenHash String    @unique @map("session_token_hash") @db.VarChar(128)
+  ipAddress        String?   @map("ip_address") @db.VarChar(64)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  expiresAt        DateTime  @map("expires_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_2fa_pending_sessions")
+}
+
+model Email2faAuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  action    String   @db.VarChar(64)
+  ipAddress String?  @map("ip_address") @db.VarChar(64)
+  userAgent String?  @map("user_agent") @db.VarChar(512)
+  details   String?  @map("details") @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("email_2fa_audit_logs")
+}
+
+// Advanced Security System Tables
+model SecuritySettings {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @map("user_id") @db.Uuid
+  loginAlerts       Boolean  @default(true) @map("login_alerts")
+  suspiciousLoginDetection Boolean @default(true) @map("suspicious_login_detection")
+  deviceTrustSystem Boolean  @default(true) @map("device_trust_system")
+  accountLockProtection Boolean @default(true) @map("account_lock_protection")
+  maxFailedAttempts Int      @default(5) @map("max_failed_attempts")
+  lockDurationMinutes Int     @default(10) @map("lock_duration_minutes")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("security_settings")
+}
+
+model TrustedDevice {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  deviceName  String   @map("device_name") @db.VarChar(128)
+  ipAddress   String   @map("ip_address") @db.VarChar(64)
+  userAgent   String   @map("user_agent") @db.VarChar(512)
+  deviceFingerprint String @map("device_fingerprint") @db.VarChar(128)
+  isTrusted   Boolean  @default(true) @map("is_trusted")
+  lastUsedAt  DateTime @default(now()) @map("last_used_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceFingerprint])
+  @@index([userId])
+  @@index([deviceFingerprint])
+  @@map("trusted_devices")
+}
+
+model PendingLoginApproval {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  tokenHash   String   @unique @map("token_hash") @db.VarChar(128)
+  ipAddress   String   @map("ip_address") @db.VarChar(64)
+  userAgent   String   @map("user_agent") @db.VarChar(512)
+  deviceFingerprint String @map("device_fingerprint") @db.VarChar(128)
+  deviceName  String   @map("device_name") @db.VarChar(128)
+  expiresAt   DateTime @map("expires_at")
+  approvedAt  DateTime? @map("approved_at")
+  rejectedAt  DateTime? @map("rejected_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("pending_login_approvals")
+}
+
+model SecurityLog {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  action      SecurityLogAction
+  ipAddress   String           @map("ip_address") @db.VarChar(64)
+  userAgent   String?          @map("user_agent") @db.VarChar(512)
+  details     String?          @db.VarChar(512)
+  severity    SecurityLogSeverity @default(INFO)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([severity, createdAt])
+  @@map("security_logs")
+}
+
+enum SecurityLogAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  NEW_DEVICE_LOGIN
+  SUSPICIOUS_LOGIN_BLOCKED
+  LOGIN_APPROVAL_REQUESTED
+  LOGIN_APPROVED
+  LOGIN_REJECTED
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+  PASSWORD_CHANGED
+  TFA_ENABLED
+  TFA_DISABLED
+  DEVICE_TRUSTED
+  DEVICE_UNTRUSTED
+}
+
+enum SecurityLogSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+

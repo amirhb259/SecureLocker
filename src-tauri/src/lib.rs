@@ -50,6 +50,7 @@ fn backend_status(state: tauri::State<'_, BackendState>) -> BackendStatus {
 pub fn run() {
     tauri::Builder::default()
         .manage(BackendState::default())
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -223,3 +224,4 @@ fn api_health_ok() -> bool {
         && response.starts_with("HTTP/1.1 200")
         && response.contains("\"ok\":true")
 }
+

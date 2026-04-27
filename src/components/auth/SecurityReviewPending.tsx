@@ -3,11 +3,10 @@ import { ShieldAlert } from "lucide-react";
 import { Button } from "../ui/Button";
 
 type SecurityReviewPendingProps = {
-  email: string;
   onBack: () => void;
 };
 
-export function SecurityReviewPending({ email, onBack }: SecurityReviewPendingProps) {
+export function SecurityReviewPending({ onBack }: SecurityReviewPendingProps) {
   return (
     <motion.div
       animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
@@ -18,8 +17,8 @@ export function SecurityReviewPending({ email, onBack }: SecurityReviewPendingPr
     >
       <div className="auth-form__header">
         <span className="eyebrow">Security approval</span>
-        <h1>Confirm this sign-in</h1>
-        <p>SecureLocker sent approval links to {email || "your verified email"} for this new IP.</p>
+        <h1>New sign-in detected</h1>
+        <p>Check your email to approve this device.</p>
       </div>
 
       <div className="verification-mark verification-mark--warning" aria-hidden="true">

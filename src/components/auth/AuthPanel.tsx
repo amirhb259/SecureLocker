@@ -1,5 +1,6 @@
 import { AnimatePresence } from "motion/react";
 import { AccountRecoveryForm } from "./AccountRecoveryForm";
+import { ApproveSignIn } from "./ApproveSignIn";
 import { ForgotPasswordForm } from "./ForgotPasswordForm";
 import { LoginForm } from "./LoginForm";
 import { LockedAccount } from "./LockedAccount";
@@ -7,9 +8,12 @@ import { RegisterForm } from "./RegisterForm";
 import { ResetPasswordForm } from "./ResetPasswordForm";
 import { SecurityReviewPending } from "./SecurityReviewPending";
 import { SecurityQuestionSetup } from "./SecurityQuestionSetup";
+import { TwoFactorLogin } from "./TwoFactorLogin";
 import { VerificationPending } from "./VerificationPending";
 
 export type AuthMode =
+  | "2fa"
+  | "approve-sign-in"
   | "forgot"
   | "locked"
   | "login"
@@ -21,31 +25,35 @@ export type AuthMode =
   | "reset";
 
 type AuthPanelProps = {
-  emailForSecurity: string;
+  approveSignInToken: string | null;
   emailForVerification: string;
   lockedEmail: string;
   mode: AuthMode;
   onAccountLocked: (email: string) => void;
   onModeChange: (mode: AuthMode) => void;
   onSecurityReviewRequired: (email: string) => void;
+  onTwoFactorRequired: (sessionToken: string) => void;
   onVerificationRequired: (email: string) => void;
   questionSetupToken: string | null;
   recoveryToken: string | null;
   resetToken: string | null;
+  twoFactorSessionToken: string | null;
 };
 
 export function AuthPanel({
-  emailForSecurity,
+  approveSignInToken,
   emailForVerification,
   lockedEmail,
   mode,
   onAccountLocked,
   onModeChange,
   onSecurityReviewRequired,
+  onTwoFactorRequired,
   onVerificationRequired,
   questionSetupToken,
   recoveryToken,
   resetToken,
+  twoFactorSessionToken,
 }: AuthPanelProps) {
   const showModeSwitch = mode === "login" || mode === "register";
 
@@ -81,7 +89,15 @@ export function AuthPanel({
               onForgotPassword={() => onModeChange("forgot")}
               onSecurityReviewRequired={onSecurityReviewRequired}
               onSwitchMode={() => onModeChange("register")}
+              onTwoFactorRequired={onTwoFactorRequired}
               onVerificationRequired={onVerificationRequired}
+            />
+          ) : null}
+          {mode === "2fa" ? (
+            <TwoFactorLogin
+              key="2fa"
+              onBack={() => onModeChange("login")}
+              sessionToken={twoFactorSessionToken || ""}
             />
           ) : null}
           {mode === "register" ? (
@@ -97,6 +113,13 @@ export function AuthPanel({
           {mode === "reset" ? (
             <ResetPasswordForm key="reset" onBack={() => onModeChange("login")} token={resetToken} />
           ) : null}
+          {mode === "approve-sign-in" ? (
+            <ApproveSignIn
+              key="approve-sign-in"
+              onBack={() => onModeChange("login")}
+              token={approveSignInToken}
+            />
+          ) : null}
           {mode === "pending-verification" ? (
             <VerificationPending
               email={emailForVerification}
@@ -106,7 +129,6 @@ export function AuthPanel({
           ) : null}
           {mode === "pending-security" ? (
             <SecurityReviewPending
-              email={emailForSecurity}
               key="pending-security"
               onBack={() => onModeChange("login")}
             />

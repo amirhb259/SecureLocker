@@ -62,3 +62,15 @@ export function signSessionJwt(payload: JwtPayload, rememberDevice: boolean) {
 export function verifySessionJwt(token: string) {
   return jwt.verify(token, config.JWT_SECRET, { algorithms: ["HS256"] }) as JwtPayload;
 }
+
+export function generate2faCode(): string {
+  // Generate a 6-digit code
+  return crypto.randomInt(100000, 999999).toString();
+}
+
+export function hash2faCode(code: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${config.AUTH_TOKEN_PEPPER}:${code}`)
+    .digest("hex");
+}

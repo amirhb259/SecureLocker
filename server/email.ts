@@ -142,21 +142,14 @@ type SecurityLoginEmail = {
   userAgent?: string | null;
 };
 
-export async function sendNewIpSecurityEmail(to: string, details: SecurityLoginEmail) {
-  const trustUrl = `${config.API_BASE_URL}/api/security/trust-ip?token=${encodeURIComponent(details.trustToken)}`;
-  const secureUrl = `${config.API_BASE_URL}/api/security/secure-account?token=${encodeURIComponent(details.secureToken)}`;
+export async function sendNewIpApprovalEmail(to: string, details: SecurityLoginEmail) {
+  console.log("sendNewSignInApprovalEmail called for", to);
+  const approveUrl = `${config.FRONTEND_URL}/?approveSignInToken=${encodeURIComponent(details.trustToken)}`;
   await sendSecureMail(to, {
-    actions: [
-      { label: "This was me - trust this IP", url: trustUrl },
-      { label: "This was not me - secure account", tone: "danger", url: secureUrl },
-    ],
-    details: [
-      { label: "IP address", value: details.ipAddress },
-      { label: "Device", value: details.userAgent },
-    ],
-    intro: "A valid sign-in attempt came from a new IP address. Confirm it before SecureLocker allows access from this location.",
-    subject: "SecureLocker security check: new sign-in location",
-    title: "New sign-in location",
+    actions: [{ label: "Approve this sign-in", url: approveUrl }],
+    intro: "New sign-in detected from an untrusted device. Approve this sign-in to continue accessing your SecureLocker account.",
+    subject: "Approve new SecureLocker sign-in",
+    title: "Approve new sign-in",
   });
 }
 
@@ -203,5 +196,115 @@ export async function sendRecoverySuccessEmail(to: string, ipAddress: string, us
     intro: "Your account was unlocked through security-question recovery. If this was not you, reset your password immediately.",
     subject: "SecureLocker account recovered",
     title: "Account recovered",
+  });
+}
+
+export async function sendEmail2faCodeEmail(to: string, code: string, purpose: "login" | "disable") {
+  console.log("sendLogin2FACodeEmail called for", to);
+  const title = purpose === "login" ? "SecureLocker 2FA Login Code" : "Confirm disabling two-factor authentication";
+  const intro = purpose === "login" 
+    ? `Enter this code to complete your SecureLocker sign-in. This code expires in 10 minutes and can only be used once.`
+    : `Enter this code to disable two-factor authentication on your SecureLocker account. This code expires in 10 minutes and can only be used once.`;
+  
+  await sendSecureMail(to, {
+    actions: [],
+    details: [
+      { label: "Verification code", value: code },
+    ],
+    intro,
+    subject: purpose === "login" ? "SecureLocker 2FA Login Code" : "Confirm disabling two-factor authentication",
+    title,
+  });
+}
+
+// Advanced Security System Email Functions
+export async function sendLoginAlertEmail(
+  to: string, 
+  eventType: string,
+  deviceInfo: { ipAddress: string; userAgent?: string },
+  accountEmail: string,
+  timestamp: Date = new Date()
+) {
+  const getSecurityAdvice = (event: string): string => {
+    switch (event) {
+      case "successful_login":
+        return "If this wasn't you, consider changing your password and enabling two-factor authentication.";
+      case "new_device_login":
+        return "New device detected. If this wasn't you, please review your trusted devices immediately.";
+      case "failed_login_attempts":
+        return "Multiple failed attempts detected. Consider enabling two-factor authentication for extra security.";
+      case "account_locked":
+        return "Your account was temporarily locked for security. Wait 10 minutes or use password recovery if needed.";
+      case "device_trusted":
+        return "A new device has been trusted for your account. You can manage trusted devices in your security settings.";
+      default:
+        return "Keep your account secure by using a strong password and enabling two-factor authentication.";
+    }
+  };
+
+  const getEventDescription = (event: string): string => {
+    switch (event) {
+      case "successful_login":
+        return "Successful sign-in to your account";
+      case "new_device_login":
+        return "Sign-in from a new device";
+      case "failed_login_attempts":
+        return "Multiple failed sign-in attempts";
+      case "account_locked":
+        return "Account temporarily locked";
+      case "device_trusted":
+        return "New device trusted";
+      default:
+        return "Security event detected";
+    }
+  };
+
+  await sendSecureMail(to, {
+    actions: [{ label: "Review Security Settings", url: `${config.FRONTEND_URL}/settings` }],
+    details: [
+      { label: "Event Type", value: getEventDescription(eventType) },
+      { label: "Account Email", value: accountEmail },
+      { label: "Date & Time", value: timestamp.toLocaleString() },
+      { label: "IP Address", value: deviceInfo.ipAddress },
+      { label: "Device", value: deviceInfo.userAgent || "Unknown Device" },
+    ],
+    intro: `A security event occurred on your SecureLocker account. ${getSecurityAdvice(eventType)}`,
+    subject: "SecureLocker login alert",
+    title: "Login Alert",
+  });
+}
+
+export async function sendLoginApprovalEmail(to: string, deviceInfo: { ipAddress: string; userAgent?: string; deviceName?: string }, approvalToken: string) {
+  const approvalUrl = `${config.FRONTEND_URL}/?approveLogin=${encodeURIComponent(approvalToken)}`;
+  
+  await sendSecureMail(to, {
+    actions: [
+      { label: "Approve sign-in", url: approvalUrl, tone: "primary" },
+      { label: "Reject sign-in", url: `${config.FRONTEND_URL}/?rejectLogin=${encodeURIComponent(approvalToken)}`, tone: "danger" },
+    ],
+    details: [
+      { label: "Device", value: deviceInfo.deviceName || "Unknown Device" },
+      { label: "IP address", value: deviceInfo.ipAddress },
+      { label: "Browser", value: deviceInfo.userAgent || "Unknown" },
+      { label: "Time", value: new Date().toLocaleString() },
+      { label: "Expires in", value: "15 minutes" },
+    ],
+    intro: "New sign-in attempt detected from an unrecognized device. Approve this sign-in to continue accessing your SecureLocker account.",
+    subject: "Approve new SecureLocker sign-in",
+    title: "Approve new sign-in",
+  });
+}
+
+export async function sendSuspiciousLoginEmail(to: string, deviceInfo: { ipAddress: string; userAgent?: string }) {
+  await sendSecureMail(to, {
+    actions: [{ label: "Secure your account", url: `${config.FRONTEND_URL}/settings` }],
+    details: [
+      { label: "IP address", value: deviceInfo.ipAddress },
+      { label: "Device", value: deviceInfo.userAgent || "Unknown" },
+      { label: "Time", value: new Date().toLocaleString() },
+    ],
+    intro: "We detected a suspicious sign-in attempt on your SecureLocker account. This sign-in was blocked for your security. If this was you, please review your security settings.",
+    subject: "Suspicious sign-in blocked on SecureLocker",
+    title: "Suspicious activity detected",
   });
 }

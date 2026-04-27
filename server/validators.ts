@@ -119,3 +119,21 @@ export const recoveryCompleteSchema = z.object({
   answers: z.array(securityAnswerSchema).length(3),
   token: z.string().min(32),
 });
+
+export const email2faEnableSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+});
+
+export const email2faVerifyCodeSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+  sessionToken: z.string().min(32),
+});
+
+export const email2faDisableSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+});
+
+export const email2faLoginCodeSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+  sessionToken: z.string().min(32),
+});

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { LockKeyhole, Mail } from "lucide-react";
 import { AuthNotice, type AuthNoticeState } from "./AuthNotice";
@@ -7,14 +7,16 @@ import { Button } from "../ui/Button";
 import { PasswordField } from "../ui/PasswordField";
 import { TextField } from "../ui/TextField";
 import { useFormField } from "../../hooks/useFormField";
-import { ApiError, authApi, storeSession } from "../../lib/authApi";
+import { ApiError, authApi, storeSession, type AuthSession } from "../../lib/authApi";
 import { validateEmail, validateRequired } from "../../lib/validation";
+import { checkForLoginApproval, approveLogin, rejectLogin } from "../../lib/securityApi";
 
 type LoginFormProps = {
   onAccountLocked: (email: string) => void;
   onForgotPassword: () => void;
   onSecurityReviewRequired: (email: string) => void;
   onSwitchMode: () => void;
+  onTwoFactorRequired: (sessionToken: string) => void;
   onVerificationRequired: (email: string) => void;
 };
 
@@ -23,6 +25,7 @@ export function LoginForm({
   onForgotPassword,
   onSecurityReviewRequired,
   onSwitchMode,
+  onTwoFactorRequired,
   onVerificationRequired,
 }: LoginFormProps) {
   const email = useFormField();
@@ -40,6 +43,79 @@ export function LoginForm({
     [email.value, password.value],
   );
   const canSubmit = !errors.email && !errors.password;
+
+  // Check for login approval on mount
+  useEffect(() => {
+    const handleLoginApproval = async () => {
+      const approval = checkForLoginApproval();
+      if (approval.token && approval.action) {
+        setIsSubmitting(true);
+        try {
+          if (approval.action === 'approve') {
+            const result = await approveLogin(approval.token);
+            if (result.success && result.sessionToken) {
+              // Create a session object from the approval response
+              const session: AuthSession = {
+                accessToken: result.sessionToken,
+                sessionToken: result.sessionToken,
+                user: {
+                  // We'll need to fetch user info or make a minimal session
+                  email: "",
+                  emailVerified: true,
+                  id: "",
+                  username: "",
+                  locked: false
+                }
+              };
+              
+              // For now, just store the token and show success
+              localStorage.setItem("securelocker.session", JSON.stringify(session));
+              setNotice({
+                tone: "success",
+                title: "Login approved",
+                message: "Your sign-in has been approved successfully. Please refresh the page.",
+              });
+              // Clear URL params
+              window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+              setNotice({
+                tone: "error",
+                title: "Approval failed",
+                message: result.error || "Failed to approve login.",
+              });
+            }
+          } else if (approval.action === 'reject') {
+            const result = await rejectLogin(approval.token);
+            if (result.success) {
+              setNotice({
+                tone: "info",
+                title: "Login rejected",
+                message: "The sign-in attempt has been rejected.",
+              });
+            } else {
+              setNotice({
+                tone: "error",
+                title: "Rejection failed",
+                message: result.error || "Failed to reject login.",
+              });
+            }
+          }
+          // Clear URL params
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (error) {
+          setNotice({
+            tone: "error",
+            title: "Approval error",
+            message: error instanceof Error ? error.message : "An error occurred during login approval.",
+          });
+        } finally {
+          setIsSubmitting(false);
+        }
+      }
+    };
+
+    handleLoginApproval();
+  }, []);
 
   async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,6 +140,10 @@ export function LoginForm({
       });
 
       if (!("accessToken" in session)) {
+        if ("sessionToken" in session && session.status === "2fa_required") {
+          onTwoFactorRequired(session.sessionToken);
+          return;
+        }
         onSecurityReviewRequired(email.value);
         return;
       }

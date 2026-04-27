@@ -2,6 +2,7 @@ import { authenticatedRequest, type ApiUser } from "./authApi";
 
 export type MeResponse = {
   activeSessionId: string;
+  email2faEnabled: boolean;
   securityQuestionsConfigured: boolean;
   user: ApiUser;
   vaultConfigured: boolean;
@@ -36,10 +37,39 @@ export type DashboardActivity = {
 };
 
 export type DashboardOverview = {
+  email2faEnabled: boolean;
+  emailVerified: boolean;
   lastActivity: DashboardActivity | null;
-  securityStatus: "locked" | "setup_required";
+  securityQuestionsConfigured: boolean;
+  securityStatus: "locked" | "ready" | "setup_required" | "at_risk";
   totalPasswords: number;
   vaultConfigured: boolean;
+};
+
+export type SecurityOverview = {
+  securityScore: number;
+  securityStatus: "ready" | "setup_required" | "at_risk";
+  emailVerified: boolean;
+  securityQuestionsConfigured: boolean;
+  vaultConfigured: boolean;
+  email2faEnabled: boolean;
+  weakPasswordCount: number;
+  reusedPasswordCount: number;
+  oldPasswordCount: number;
+  vaultEncryptionStatus: "enabled" | "required";
+  recommendations: string[];
+  scoreComponents: {
+    emailVerified: number;
+    email2faEnabled: number;
+    securityQuestionsConfigured: number;
+    vaultConfigured: number;
+    trustedDevices: number;
+    trustedIps: number;
+  };
+  trustedSessionCount: number;
+  trustedIpCount: number;
+  totalPasswords: number;
+  lastSecurityScan: string | null;
 };
 
 export type SessionDevice = {
@@ -96,6 +126,7 @@ export const dashboardApi = {
   getCredentials: () => authenticatedRequest<{ credentials: EncryptedCredential[] }>("/vault/credentials"),
   getMe: () => authenticatedRequest<MeResponse>("/me"),
   getOverview: () => authenticatedRequest<DashboardOverview>("/dashboard/overview"),
+  getSecurityOverview: () => authenticatedRequest<SecurityOverview>("/security/overview"),
   getSessions: () => authenticatedRequest<{ sessions: SessionDevice[] }>("/sessions"),
   getVaultEnvelope: () => authenticatedRequest<{ vault: VaultEnvelope }>("/vault/envelope"),
   getVaultStatus: () =>
@@ -108,6 +139,30 @@ export const dashboardApi = {
     }),
   revokeSession: (id: string) =>
     authenticatedRequest<{ message: string }>(`/sessions/${id}/revoke`, { method: "POST" }),
+  sendPasswordHealth: (data: {
+    weakPasswordCount: number;
+    reusedPasswordCount: number;
+    oldPasswordCount: number;
+    totalPasswords: number;
+  }) =>
+    authenticatedRequest<{ message: string; weakPasswordCount: number; reusedPasswordCount: number; oldPasswordCount: number; totalPasswords: number }>("/security/password-health", {
+      body: JSON.stringify(data),
+      method: "POST",
+    }),
+  send2faEnableCode: () =>
+    authenticatedRequest<{ message: string }>("/2fa/enable/send-code", { method: "POST" }),
+  send2faDisableCode: () =>
+    authenticatedRequest<{ message: string }>("/2fa/disable/send-code", { method: "POST" }),
+  verify2faEnableCode: (code: string) =>
+    authenticatedRequest<{ message: string }>("/2fa/enable/verify-code", {
+      body: JSON.stringify({ code }),
+      method: "POST",
+    }),
+  verify2faDisableCode: (code: string) =>
+    authenticatedRequest<{ message: string }>("/2fa/disable/verify-code", {
+      body: JSON.stringify({ code }),
+      method: "POST",
+    }),
   updateCredential: (id: string, credential: { ciphertext: string; nonce: string }) =>
     authenticatedRequest<{ credential: EncryptedCredential }>(`/vault/credentials/${id}`, {
       body: JSON.stringify(credential),

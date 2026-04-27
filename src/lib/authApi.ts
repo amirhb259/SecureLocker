@@ -30,7 +30,14 @@ export type SecurityReviewResponse = {
   status: "security_review_required";
 };
 
-export type LoginResponse = AuthSession | SecurityReviewResponse;
+export type TwoFactorLoginResponse = {
+  code: "2FA_REQUIRED";
+  message: string;
+  sessionToken: string;
+  status: "2fa_required";
+};
+
+export type LoginResponse = AuthSession | SecurityReviewResponse | TwoFactorLoginResponse;
 
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:4100/api";
 
@@ -164,6 +171,10 @@ export const authApi = {
     request<{ questions: SecurityQuestion[] }>("/auth/recovery/challenge", { token }),
   completeAccountRecovery: (token: string, answers: string[]) =>
     request<{ message: string }>("/auth/recovery/complete", { answers, token }),
+  send2faLoginCode: (sessionToken: string) =>
+    request<{ message: string }>("/2fa/login/send-code", { sessionToken }),
+  verify2faLoginCode: (input: { code: string; sessionToken: string }) =>
+    request<AuthSession>("/2fa/login/verify-code", input),
 };
 
 const sessionStorageKey = "securelocker.session";

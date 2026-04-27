@@ -1,0 +1,36 @@
+{
+  "version": "0.1.2",
+  "releaseDate": "2026-04-27",
+
+  "newFeatures": [
+    "Email 2FA system added with verification on login",
+    "Login Alerts system added for security notifications",
+    "Start with Windows option added",
+    "Automatic update checker on app startup",
+    "Quick Actions selector added in settings (max 3 selectable)"
+  ],
+
+  "newSettings": [
+    "Enable/Disable Email 2FA",
+    "Enable/Disable Login Alerts",
+    "Start app with Windows toggle",
+    "Auto-check for updates on startup",
+    "Quick Actions customization in settings"
+  ],
+
+  "securityImprovements": [
+    "Improved login protection system",
+    "Added real-time login alert emails",
+    "Improved Security Center UI and status indicators",
+    "Better handling of authentication flows",
+    "Separation of 2FA and security-related email logic"
+  ],
+
+  "bugFixes": [
+    "Fixed multiple UI spacing and alignment issues",
+    "Fixed Quick Actions layout and selection bugs",
+    "Fixed issues with settings categories structure",
+    "Fixed authentication-related UI glitches",
+    "General stability and performance improvements"
+  ]
+}
