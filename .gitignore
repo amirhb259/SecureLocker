@@ -42,6 +42,7 @@ build/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # IDE files
 .vscode/
@@ -60,8 +61,6 @@ Thumbs.db
 
 # Sensitive files (auto-detected)
 .env
-.env.example
 build
 dist
 node_modules
-

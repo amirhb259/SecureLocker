@@ -158,6 +158,18 @@ export const dashboardApi = {
       body: JSON.stringify({ code }),
       method: "POST",
     }),
+  sendEmergencyLockCode: () =>
+    authenticatedRequest<{ message: string }>("/emergency-lock/send-code", { method: "POST" }),
+  verifyEmergencyLockCode: (code: string) =>
+    authenticatedRequest<{ message: string }>("/emergency-lock/verify-code", {
+      body: JSON.stringify({ code }),
+      method: "POST",
+    }),
+  saveEmergencyLockShortcut: (shortcut: string) =>
+    authenticatedRequest<{ message: string }>("/account/emergency-shortcut/save", {
+      body: JSON.stringify({ shortcut }),
+      method: "POST",
+    }),
   verify2faDisableCode: (code: string) =>
     authenticatedRequest<{ message: string }>("/2fa/disable/verify-code", {
       body: JSON.stringify({ code }),

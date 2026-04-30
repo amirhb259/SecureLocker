@@ -1,26 +1,41 @@
 {
-  "version": "0.1.1",
-  "notes": "- Added a real SecureLocker header update action that checks, downloads, and installs signed Tauri updates.\n- Added a post-update changelog overlay that appears once after the app restarts on a newly installed version.\n- Added a subtle in-app version label in the bottom-right corner so the running desktop build is always visible.\n- Updater installs now rely on the configured Tauri public key and reject unsigned or invalid release artifacts.\n- Kept update state separate from the authentication session flow so background update checks do not interfere with sign-in state.",
-  "pub_date": "2026-04-25T00:00:00.000Z",
+  "version": "0.1.2",
+  "notes": "- Email 2FA system added with verification on login\n- Login Alerts system added for security notifications\n- Start with Windows option added\n- Automatic update checker on app startup\n- Quick Actions selector added in settings (max 3 selectable)\n- Enable/Disable Email 2FA\n- Enable/Disable Login Alerts\n- Start app with Windows toggle\n- Auto-check for updates on startup\n- Quick Actions customization in settings\n- Improved login protection system\n- Added real-time login alert emails\n- Improved Security Center UI and status indicators\n- Better handling of authentication flows\n- Separation of 2FA and security-related email logic\n- Fixed multiple UI spacing and alignment issues\n- Fixed Quick Actions layout and selection bugs\n- Fixed issues with settings categories structure\n- Fixed authentication-related UI glitches\n- General stability and performance improvements",
+  "pub_date": "2026-04-27T00:00:00.000Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUYUFSSGlTZkRSd1lFWGgrcjZiVE0xazJNY1hvR3VqaUZsVUc1OEF2UjN2NlRYNmlTNnJvUHVGYTZLQnBIaDFZR2hhWE1zTFZLQTBTTlM4UWpscjJpd2YzaTZEdldMcVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3MTI5NzU3CWZpbGU6U2VjdXJlTG9ja2VyXzAuMS4xX3g2NC1zZXR1cC5leGUKNUxHVW1raml1bHhSSURwdk1UZHl4TEVIejQ4NG9zWWJ3U2RHcEkvY1NDVm9talY3WWUwRDVVaFBjRmxTMmYwbEQremhURk93eUJCOWo1NC9uOTdwQWc9PQo=",
-      "url": "https://github.com/amirhb259/SecureLocker/releases/latest/download/SecureLocker_0.1.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUYUFSSGlTZkRSd1FvWUNCaXZnQXRIL20xb28zVUl2UC9WTlZVYnhuQWFIMVZjazNNWW5UWnRTckl6QlBJeENWN0JGbWdnZTdlbVNvZFN2Y0VwYlBMUkdMWFZycTVSM2c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc3MzA2MjUwCWZpbGU6U2VjdXJlTG9ja2VyXzAuMS4yX3g2NC1zZXR1cC5leGUKVmRDK0JQRlliTSt2UzVxbzdGVk96aHlOSEdxYVBlUitOOVNMUm9ucXlZLzFBdE1pV2F1d3JkejRqSllaYlNYUjZSK1dOTStTZnJ4RFhFTDcvRGpNREE9PQo=",
+      "url": "https://github.com/amirhb259/SecureLocker/releases/latest/download/SecureLocker_0.1.2_x64-setup.exe"
     }
   },
   "releaseNotes": {
     "bugFixes": [
-      "Kept update state separate from the authentication session flow so background update checks do not interfere with sign-in state."
+      "Fixed multiple UI spacing and alignment issues",
+      "Fixed Quick Actions layout and selection bugs",
+      "Fixed issues with settings categories structure",
+      "Fixed authentication-related UI glitches",
+      "General stability and performance improvements"
     ],
     "newFeatures": [
-      "Added a real SecureLocker header update action that checks, downloads, and installs signed Tauri updates.",
-      "Added a post-update changelog overlay that appears once after the app restarts on a newly installed version."
+      "Email 2FA system added with verification on login",
+      "Login Alerts system added for security notifications",
+      "Start with Windows option added",
+      "Automatic update checker on app startup",
+      "Quick Actions selector added in settings (max 3 selectable)"
     ],
     "newSettings": [
-      "Added a subtle in-app version label in the bottom-right corner so the running desktop build is always visible."
+      "Enable/Disable Email 2FA",
+      "Enable/Disable Login Alerts",
+      "Start app with Windows toggle",
+      "Auto-check for updates on startup",
+      "Quick Actions customization in settings"
     ],
     "securityImprovements": [
-      "Updater installs now rely on the configured Tauri public key and reject unsigned or invalid release artifacts."
+      "Improved login protection system",
+      "Added real-time login alert emails",
+      "Improved Security Center UI and status indicators",
+      "Better handling of authentication flows",
+      "Separation of 2FA and security-related email logic"
     ]
   }
 }

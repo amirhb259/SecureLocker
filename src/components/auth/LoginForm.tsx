@@ -7,7 +7,7 @@ import { Button } from "../ui/Button";
 import { PasswordField } from "../ui/PasswordField";
 import { TextField } from "../ui/TextField";
 import { useFormField } from "../../hooks/useFormField";
-import { ApiError, authApi, storeSession, type AuthSession } from "../../lib/authApi";
+import { ApiError, authApi, storeSession } from "../../lib/authApi";
 import { validateEmail, validateRequired } from "../../lib/validation";
 import { checkForLoginApproval, approveLogin, rejectLogin } from "../../lib/securityApi";
 
@@ -53,27 +53,11 @@ export function LoginForm({
         try {
           if (approval.action === 'approve') {
             const result = await approveLogin(approval.token);
-            if (result.success && result.sessionToken) {
-              // Create a session object from the approval response
-              const session: AuthSession = {
-                accessToken: result.sessionToken,
-                sessionToken: result.sessionToken,
-                user: {
-                  // We'll need to fetch user info or make a minimal session
-                  email: "",
-                  emailVerified: true,
-                  id: "",
-                  username: "",
-                  locked: false
-                }
-              };
-              
-              // For now, just store the token and show success
-              localStorage.setItem("securelocker.session", JSON.stringify(session));
+            if (result.success) {
               setNotice({
                 tone: "success",
                 title: "Login approved",
-                message: "Your sign-in has been approved successfully. Please refresh the page.",
+                message: "This device is approved. Sign in again to continue.",
               });
               // Clear URL params
               window.history.replaceState({}, document.title, window.location.pathname);
@@ -167,7 +151,7 @@ export function LoginForm({
         });
         return;
       }
-      if (error instanceof ApiError && error.code === "ACCOUNT_LOCKED") {
+      if (error instanceof ApiError && (error.code === "ACCOUNT_LOCKED" || error.code === "ACCOUNT_DEACTIVATED")) {
         onAccountLocked(email.value);
         return;
       }

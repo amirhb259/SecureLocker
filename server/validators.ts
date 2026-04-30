@@ -137,3 +137,27 @@ export const email2faLoginCodeSchema = z.object({
   code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
   sessionToken: z.string().min(32),
 });
+
+export const accountDisableSchema = z.object({
+  password: z.string().min(1),
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+});
+
+export const accountReactivateSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(320),
+  answers: z.array(securityAnswerSchema).length(3),
+});
+
+export const emailChangeVerifyCurrentSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+});
+
+export const emailChangeSubmitNewSchema = z.object({
+  newEmail: z.string().trim().toLowerCase().email().max(320),
+});
+
+export const emailChangeCompleteSchema = z.object({
+  newEmail: z.string().trim().toLowerCase().email().max(320),
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+  password: z.string().min(1),
+});

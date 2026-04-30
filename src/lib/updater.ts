@@ -88,6 +88,23 @@ export async function runUpdateFlow() {
   return "installed" as const;
 }
 
+export async function checkForUpdatesOnStartup() {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  try {
+    const update = await check({ timeout: 15000 });
+    if (update) {
+      const announcement = buildAnnouncement(update);
+      persistPendingAnnouncement(announcement);
+    }
+  } catch (error) {
+    console.log("Auto update check failed:", error);
+    // Do not show toast on startup failure to avoid spam
+  }
+}
+
 export function consumeUpdateAnnouncement(currentVersion: string) {
   const pending = readPendingAnnouncement();
   if (!pending || pending.version !== currentVersion) {

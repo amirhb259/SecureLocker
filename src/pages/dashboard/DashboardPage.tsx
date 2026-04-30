@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
+  AlertTriangle,
   CheckCircle2,
   Clipboard,
   Copy,
@@ -18,23 +19,29 @@ import {
   LogOut,
   Mail,
   MonitorSmartphone,
+  Pause,
   Plus,
   RotateCcwKey,
   Search,
   Settings,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Tags,
+  Trash,
   Trash2,
   UserRound,
+  UserX,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { clsx } from "clsx";
 import secureLockerLogo from "../../assets/new-securelocker-logo.png";
 import { Button } from "../../components/ui/Button";
+import { EmergencyLockShortcutCard } from "../../components/EmergencyLockShortcutCard";
 import { PasswordField } from "../../components/ui/PasswordField";
 import { TextField } from "../../components/ui/TextField";
-import { ApiError } from "../../lib/authApi";
+import { ApiError, authApi } from "../../lib/authApi";
 import { getAutostartState, setAutostartState } from "../../lib/desktopSettings";
 import {
   MeResponse,
@@ -68,7 +75,7 @@ import {
   updateSecuritySettings,
   type SecuritySettings,
 } from "../../lib/securityApi";
-import { AppUpdaterError, isTauriRuntime, runUpdateFlow } from "../../lib/updater";
+import { AppUpdaterError, checkForUpdatesOnStartup, isTauriRuntime, runUpdateFlow } from "../../lib/updater";
 import "../../styles/dashboard.css";
 
 // Component definitions moved to top to avoid hoisting issues
@@ -175,7 +182,8 @@ function isUrlLike(value: string) {
   try {
     const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     const url = new URL(candidate);
-    return Boolean(url.hostname.includes(".") || url.hostname === "localhost");
+    if (url.hostname.includes(".")) return true;
+    return import.meta.env.DEV && url.hostname === ["local", "host"].join("");
   } catch {
     return false;
   }
@@ -285,18 +293,55 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [twoFactorFlow, setTwoFactorFlow] = useState<"idle" | "enabling" | "disabling">("idle");
+  const [emergencyLockFlow, setEmergencyLockFlow] = useState<"idle" | "enabling" | "setting">("idle");
+  const [emergencyShortcut, setEmergencyShortcut] = useState<string>("");
+  const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
+  const [pressedKeys, setPressedKeys] = useState<Set<string>>(new Set());
   const [twoFaCode, setTwoFaCode] = useState("");
   const [twoFaError, setTwoFaError] = useState("");
+
+  // Account security states
+  const [accountDisableModalOpen, setAccountDisableModalOpen] = useState(false);
+  const [accountDisablePassword, setAccountDisablePassword] = useState("");
+  const [accountDisableCode, setAccountDisableCode] = useState("");
+  const [accountDisableError, setAccountDisableError] = useState("");
+  const [accountDisableStep, setAccountDisableStep] = useState<"code" | "password">("code");
+  const [emailChangeModalOpen, setEmailChangeModalOpen] = useState(false);
+  const [emailChangeStep, setEmailChangeStep] = useState<"current" | "new" | "verify" | "password">("current");
+  const [emailChangeCurrentCode, setEmailChangeCurrentCode] = useState("");
+  const [emailChangeNewEmail, setEmailChangeNewEmail] = useState("");
+  const [emailChangeNewCode, setEmailChangeNewCode] = useState("");
+  const [emailChangePassword, setEmailChangePassword] = useState("");
+  const [emailChangeError, setEmailChangeError] = useState("");
+  const [emailChangeCodeSent, setEmailChangeCodeSent] = useState(false);
+  const [accountReactivateModalOpen, setAccountReactivateModalOpen] = useState(false);
+  const [reactivateEmail, setReactivateEmail] = useState("");
+  const [reactivateAnswers, setReactivateAnswers] = useState<string[]>(["", "", ""]);
+  const [reactivateError, setReactivateError] = useState("");
 
   // Theme sync effect
   useEffect(() => {
     const theme = settingsPreferences.themeMode;
     if (theme === "system") {
-      document.documentElement.removeAttribute("data-theme");
+      document.documentElement.setAttribute("data-theme", window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     } else {
       document.documentElement.setAttribute("data-theme", theme);
     }
   }, [settingsPreferences.themeMode]);
+
+  // Auto update check on startup
+  useEffect(() => {
+    if (isTauriRuntime() && settingsPreferences.checkForUpdatesOnStartup) {
+      checkForUpdatesOnStartup();
+    }
+  }, [settingsPreferences.checkForUpdatesOnStartup]);
+
+  // Auto-send email change code when modal opens
+  useEffect(() => {
+    if (emailChangeModalOpen && !emailChangeCodeSent && emailChangeStep === "current") {
+      handleEmailChangeSendCurrentCode();
+    }
+  }, [emailChangeModalOpen, emailChangeCodeSent, emailChangeStep]);
 
 
   useEffect(() => {
@@ -362,6 +407,49 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   useEffect(() => {
     void loadDashboard();
   }, []);
+
+  useEffect(() => {
+    if (emergencyLockFlow !== "setting" || !isRecordingShortcut) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      const key = event.key.toUpperCase();
+      const modifiers = [];
+      if (event.ctrlKey) modifiers.push('Ctrl');
+      if (event.altKey) modifiers.push('Alt');
+      if (event.shiftKey) modifiers.push('Shift');
+      if (event.metaKey) modifiers.push('Meta');
+
+      const newPressed = new Set(pressedKeys);
+      newPressed.add(key);
+      modifiers.forEach(mod => newPressed.add(mod));
+      setPressedKeys(newPressed);
+
+      // Build combination
+      const mods = modifiers.sort();
+      const nonMods = Array.from(newPressed).filter(k => !['Ctrl', 'Alt', 'Shift', 'Meta'].includes(k)).sort();
+      if (mods.length >= 2 && nonMods.length >= 1) {
+        const combo = [...mods, ...nonMods].join('+');
+        setEmergencyShortcut(combo);
+        setIsRecordingShortcut(false);
+        setPressedKeys(new Set());
+      }
+    };
+
+    const handleKeyUp = () => {
+      setPressedKeys(new Set());
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [emergencyLockFlow, isRecordingShortcut, pressedKeys]);
+
+
 
   // Real-time security updates - refresh every 30 seconds
   useEffect(() => {
@@ -999,6 +1087,37 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     }
   }
 
+  async function handleEmergencyLockEnable(event?: React.MouseEvent) {
+    // Prevent any default behavior AND stop propagation
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    try {
+      // Set flow state FIRST - this keeps the modal open
+      setEmergencyLockFlow("enabling");
+      setTwoFaCode("");
+      setTwoFaError("");
+
+      setBusyAction("emergency-lock-send-code");
+
+      // Send verification code for emergency lock setup
+      console.log("request-enable API called");
+      await dashboardApi.sendEmergencyLockCode();
+
+      setNotice({ message: "Verification code sent to your email.", tone: "success" });
+
+      // Keep modal open - do NOT reset emergencyLockFlow here
+      setBusyAction(null);
+    } catch (error) {
+      setTwoFaError(friendlyError(error));
+      // Only close on error
+      setEmergencyLockFlow("idle");
+      setBusyAction(null);
+    }
+  }
+
   async function handle2faDisable(event?: React.MouseEvent) {
     // Prevent any default behavior AND stop propagation
     if (event) {
@@ -1025,6 +1144,39 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
       setTwoFaError(friendlyError(error));
       // Only close on error
       setTwoFactorFlow("idle");
+      setBusyAction(null);
+    }
+  }
+
+
+
+  async function handleEmergencyLockVerifyCode(event: FormEvent) {
+    event.preventDefault();
+
+    if (!twoFaCode.trim()) {
+      setTwoFaError("Verification code is required.");
+      return;
+    }
+
+    if (twoFaCode.length !== 6 || !/^\d{6}$/.test(twoFaCode)) {
+      setTwoFaError("Verification code must be 6 digits.");
+      return;
+    }
+
+    try {
+      setBusyAction("emergency-lock-verify");
+
+      // Verify code and send setup link
+      console.log("Verifying emergency lock code:", twoFaCode);
+      await dashboardApi.verifyEmergencyLockCode(twoFaCode);
+
+      // Proceed to setting step
+      setEmergencyLockFlow("setting");
+      setTwoFaCode("");
+      setTwoFaError("");
+      setBusyAction(null);
+    } catch (error) {
+      setTwoFaError(friendlyError(error));
       setBusyAction(null);
     }
   }
@@ -1084,6 +1236,94 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     setCurrentPassword("");
     setNewAccountPassword("");
     setConfirmAccountPassword("");
+  }
+
+  async function handleSendAccountDisableCode() {
+    try {
+      setBusyAction("send-disable-code");
+      await authApi.sendAccountDisableCode();
+      setNotice({ message: "Account disable code sent to your email.", tone: "success" });
+      setAccountDisableStep("code");
+      setAccountDisableError("");
+    } catch (error) {
+      console.error("Send disable code error:", error);
+      setAccountDisableError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
+  }
+
+  async function handleDisableAccount(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusyAction("disable-account");
+      await authApi.disableAccount({ password: accountDisablePassword, code: accountDisableCode });
+      setNotice({ message: "Account disabled successfully.", tone: "success" });
+      setAccountDisableModalOpen(false); setAccountDisablePassword(""); setAccountDisableCode(""); setAccountDisableError(""); setAccountDisableStep("code");
+      await refreshActivity();
+    } catch (error) {
+      console.error("Disable account error:", error);
+      setAccountDisableError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
+  }
+
+  async function handleReactivateAccount(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusyAction("reactivate-account");
+      await authApi.reactivateAccount({ email: reactivateEmail, answers: reactivateAnswers });
+      setNotice({ message: "Account reactivated successfully.", tone: "success" });
+      setAccountReactivateModalOpen(false); setReactivateEmail(""); setReactivateAnswers(["", "", ""]); setReactivateError("");
+      await refreshActivity();
+    } catch (error) { setReactivateError(friendlyError(error)); } finally { setBusyAction(null); }
+  }
+
+  async function handleEmailChangeSendCurrentCode() {
+    try {
+      setBusyAction("email-change-send-current");
+      await authApi.sendEmailChangeCurrentCode();
+      setNotice({ message: "Verification code sent to your current email.", tone: "success" });
+      setEmailChangeCodeSent(true);
+    } catch (error) {
+      console.error("Send email change current code error:", error);
+      setEmailChangeError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
+  }
+
+  async function handleEmailChangeStep1(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusyAction("email-change-current");
+      await authApi.verifyEmailChangeCurrentCode({ code: emailChangeCurrentCode });
+      setEmailChangeStep("new"); setEmailChangeCurrentCode(""); setEmailChangeError("");
+    } catch (error) {
+      console.error("Email change step 1 error:", error);
+      setEmailChangeError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
+  }
+
+  async function handleEmailChangeStep2(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusyAction("email-change-new");
+      await authApi.submitEmailChangeNewEmail({ newEmail: emailChangeNewEmail });
+      setEmailChangeStep("verify"); setEmailChangeError("");
+    } catch (error) {
+      console.error("Email change step 2 error:", error);
+      setEmailChangeError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
+  }
+
+  async function handleEmailChangeStep3(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusyAction("email-change-complete");
+      await authApi.completeEmailChange({ newEmail: emailChangeNewEmail, code: emailChangeNewCode, password: emailChangePassword });
+      setNotice({ message: "Email address changed successfully.", tone: "success" });
+      setEmailChangeModalOpen(false); setEmailChangeStep("current"); setEmailChangeCurrentCode(""); setEmailChangeNewEmail(""); setEmailChangeNewCode(""); setEmailChangePassword(""); setEmailChangeError("");
+      await loadDashboard();
+    } catch (error) {
+      console.error("Email change step 3 error:", error);
+      setEmailChangeError(error instanceof Error ? error.message : "Unknown error occurred");
+    } finally { setBusyAction(null); }
   }
 
   const displayUsername = settingsPreferences.hideSensitiveInformation ? maskText(me.user.username, "username") : me.user.username;
@@ -1229,6 +1469,41 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           ) : null}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {emergencyLockFlow === "enabling" ? (
+            <motion.div
+              animate={{ opacity: 1 }}
+              aria-labelledby="emergency-lock-modal-title"
+              aria-modal="true"
+              className="password-modal"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              role="dialog"
+            >
+              {renderEmergencyLockModal()}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {emergencyLockFlow === "setting" ? (
+            <motion.div
+              animate={{ opacity: 1 }}
+              aria-labelledby="emergency-lock-setting-modal-title"
+              aria-modal="true"
+              className="password-modal"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              role="dialog"
+            >
+              {renderEmergencyLockSettingModal()}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>{accountDisableModalOpen ? renderAccountDisableModal() : null}</AnimatePresence>
+        <AnimatePresence>{emailChangeModalOpen ? renderEmailChangeModal() : null}</AnimatePresence>
+        <AnimatePresence>{accountReactivateModalOpen ? renderAccountReactivateModal() : null}</AnimatePresence>
         <AnimatePresence>{settingsConfirmAction ? renderSettingsConfirmation() : null}</AnimatePresence>
 
         {isLoading ? (
@@ -1682,6 +1957,247 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
     );
   }
 
+  function renderEmergencyLockSettingModal() {
+    const handleSave = async () => {
+      if (!emergencyShortcut) return;
+
+      try {
+        setBusyAction("emergency-lock-save");
+        await dashboardApi.saveEmergencyLockShortcut(emergencyShortcut);
+        setNotice({ message: "Emergency Lock Shortcut enabled.", tone: "success" });
+        setEmergencyLockFlow("idle");
+        setEmergencyShortcut("");
+        setIsRecordingShortcut(false);
+        setPressedKeys(new Set());
+        setBusyAction(null);
+      } catch (error) {
+        setNotice({ message: "Failed to save Emergency Lock Shortcut.", tone: "error" });
+        setBusyAction(null);
+      }
+    };
+
+    const handleCancel = () => {
+      setEmergencyLockFlow("idle");
+      setEmergencyShortcut("");
+      setIsRecordingShortcut(false);
+      setPressedKeys(new Set());
+    };
+
+    return (
+      <motion.div
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}
+      >
+        <motion.div
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.98, y: 10 }}
+          initial={{ scale: 0.98, y: 10 }}
+          style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}
+        >
+          <header style={{
+            padding: '24px 24px 0',
+            borderBottom: '1px solid #e5e7eb',
+            marginBottom: '24px'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <h2 style={{
+                fontSize: '24px',
+                fontWeight: '600',
+                color: '#111827',
+                margin: 0
+              }}>
+                Emergency Shortcut Setup
+              </h2>
+              <button
+                onClick={handleCancel}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  color: '#6b7280'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </header>
+
+          <div style={{ padding: '0 24px 24px' }}>
+            <p style={{
+              color: '#6b7280',
+              fontSize: '16px',
+              lineHeight: '1.5',
+              marginBottom: '32px',
+              textAlign: 'center'
+            }}>
+              Choose a hidden shortcut that instantly locks your account.
+            </p>
+
+            <div style={{
+              border: '2px dashed #d1d5db',
+              borderRadius: '8px',
+              padding: '48px 24px',
+              textAlign: 'center',
+              backgroundColor: isRecordingShortcut ? '#fef2f2' : '#f9fafb'
+            }}>
+              <h3 style={{
+                fontSize: '18px',
+                fontWeight: '500',
+                color: '#374151',
+                marginBottom: '16px'
+              }}>
+                Press your shortcut
+              </h3>
+
+              <button
+                onClick={() => setIsRecordingShortcut(!isRecordingShortcut)}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: isRecordingShortcut ? '#dc2626' : '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  marginBottom: '16px'
+                }}
+              >
+                {isRecordingShortcut ? 'Recording...' : 'Start Recording'}
+              </button>
+
+              {emergencyShortcut && (
+                <div style={{
+                  fontSize: '18px',
+                  fontWeight: '600',
+                  color: '#1f2937',
+                  backgroundColor: '#e5e7eb',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  display: 'inline-block',
+                  marginTop: '16px'
+                }}>
+                  {emergencyShortcut}
+                </div>
+              )}
+
+              <p style={{
+                fontSize: '14px',
+                color: '#6b7280',
+                marginTop: '16px'
+              }}>
+                Press at least 2 modifier keys (Ctrl, Alt, Shift) + 1 regular key
+              </p>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              justifyContent: 'center',
+              marginTop: '32px'
+            }}>
+              <Button
+                loading={busyAction === "emergency-lock-save"}
+                onClick={handleSave}
+                disabled={!emergencyShortcut}
+              >
+                Save Shortcut
+              </Button>
+              <Button
+                onClick={handleCancel}
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+    );
+  }
+
+  function renderEmergencyLockModal() {
+    return (
+      <motion.form
+        animate={{ scale: 1, y: 0 }}
+        className="password-modal__panel"
+        exit={{ scale: 0.98, y: 10 }}
+        initial={{ scale: 0.98, y: 10 }}
+        onSubmit={handleEmergencyLockVerifyCode}
+      >
+        <header className="password-modal__header">
+          <h2 id="emergency-lock-modal-title">
+            Enable Emergency Lock Shortcut
+          </h2>
+          <button
+            aria-label="Close Emergency Lock form"
+            disabled={busyAction === "emergency-lock-verify"}
+            onClick={() => setEmergencyLockFlow("idle")}
+            type="button"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="password-modal__body">
+          {twoFaError ? <div className="entry-form-error">{twoFaError}</div> : null}
+          <p style={{ marginBottom: "16px", color: "#bed0dc", fontSize: "14px" }}>
+            Enter the 6-digit code sent to your email to enable the Emergency Lock Shortcut.
+          </p>
+          <TextField
+            autoComplete="off"
+            id="emergency-lock-code"
+            inputMode="numeric"
+            label="Verification code"
+            maxLength={6}
+            onChange={setTwoFaCode}
+            placeholder="000000"
+            value={twoFaCode}
+          />
+        </div>
+        <footer className="password-modal__footer">
+          <Button loading={busyAction === "emergency-lock-verify"} type="submit">
+            Verify code
+          </Button>
+          <Button
+            disabled={busyAction === "emergency-lock-verify"}
+            onClick={() => setEmergencyLockFlow("idle")}
+            type="button"
+            variant="ghost"
+          >
+            Cancel
+          </Button>
+        </footer>
+      </motion.form>
+    );
+  }
+
   function render2faModal() {
     const isEnabling = twoFactorFlow === "enabling";
     
@@ -1738,6 +2254,96 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
           </Button>
         </footer>
       </motion.form>
+    );
+  }
+
+  function renderAccountDisableModal() {
+    return (
+      <motion.div animate={{ opacity: 1 }} aria-labelledby="account-disable-title" aria-modal="true" className="settings-confirm" exit={{ opacity: 0 }} initial={{ opacity: 0 }} role="dialog">
+        <motion.form animate={{ scale: 1, y: 0 }} className="settings-confirm__panel" exit={{ scale: 0.98, y: 10 }} initial={{ scale: 0.98, y: 10 }} onSubmit={handleDisableAccount}>
+          <header className="settings-confirm__header">
+            <div><p>Secure confirmation</p><h2 id="account-disable-title">Temporarily disable account</h2></div>
+            <button aria-label="Close confirmation" disabled={busyAction === "disable-account"} onClick={() => setAccountDisableModalOpen(false)} type="button"><X aria-hidden="true" /></button>
+          </header>
+          <div className="settings-confirm__body">
+            <p>This will temporarily disable your SecureLocker account. You can reactivate it at any time by answering your security questions.</p>
+            {accountDisableStep === "code" ? (
+              <>
+                <TextField autoComplete="off" id="disable-code" inputMode="numeric" label="Verification code from email" maxLength={6} onChange={(value) => setAccountDisableCode(value)} placeholder="000000" value={accountDisableCode} />
+                <Button onClick={handleSendAccountDisableCode} disabled={busyAction === "send-disable-code"} variant="ghost" type="button">{busyAction === "send-disable-code" ? "Sending..." : "Resend code"}</Button>
+              </>
+            ) : (
+              <PasswordField autoComplete="current-password" id="disable-password" label="Account password" onChange={(value) => setAccountDisablePassword(value)} value={accountDisablePassword} />
+            )}
+            {accountDisableError && <div className="entry-form-error">{accountDisableError}</div>}
+          </div>
+          <footer className="settings-confirm__footer">
+            <Button loading={busyAction === "disable-account"} type="submit" variant="ghost"><UserX aria-hidden="true" />{accountDisableStep === "code" ? "Verify code" : "Disable account"}</Button>
+            <Button disabled={busyAction === "disable-account"} onClick={() => setAccountDisableModalOpen(false)} variant="ghost">Cancel</Button>
+          </footer>
+        </motion.form>
+      </motion.div>
+    );
+  }
+
+  function renderEmailChangeModal() {
+    const stepTitle: Record<string, string> = { current: "Verify current email", new: "Enter new email", verify: "Verify new email", password: "Confirm password" };
+    const stepDesc: Record<string, string> = { current: "Enter the verification code sent to your current email address.", new: "Enter your new email address.", verify: "Enter the verification code sent to your new email address.", password: "Enter your account password to confirm the email change." };
+    return (
+      <motion.div animate={{ opacity: 1 }} aria-labelledby="email-change-title" aria-modal="true" className="settings-confirm" exit={{ opacity: 0 }} initial={{ opacity: 0 }} role="dialog">
+        <motion.form animate={{ scale: 1, y: 0 }} className="settings-confirm__panel" exit={{ scale: 0.98, y: 10 }} initial={{ scale: 0.98, y: 10 }} onSubmit={emailChangeStep === "current" ? handleEmailChangeStep1 : emailChangeStep === "new" ? handleEmailChangeStep2 : handleEmailChangeStep3}>
+          <header className="settings-confirm__header">
+            <div><p>Secure confirmation</p><h2 id="email-change-title">{stepTitle[emailChangeStep] ?? "Change email"}</h2></div>
+            <button aria-label="Close confirmation" disabled={busyAction?.startsWith("email-change")} onClick={() => setEmailChangeModalOpen(false)} type="button"><X aria-hidden="true" /></button>
+          </header>
+          <div className="settings-confirm__body">
+            <p>{stepDesc[emailChangeStep] ?? ""}</p>
+            {emailChangeStep === "current" && (
+              <>
+                <TextField autoComplete="off" id="current-email-code" inputMode="numeric" label="Verification code" maxLength={6} onChange={(value) => setEmailChangeCurrentCode(value)} placeholder="000000" value={emailChangeCurrentCode} />
+                <Button onClick={handleEmailChangeSendCurrentCode} disabled={busyAction === "email-change-send-current"} variant="ghost" type="button">{busyAction === "email-change-send-current" ? "Sending..." : "Resend code"}</Button>
+              </>
+            )}
+            {emailChangeStep === "new" && <TextField autoComplete="email" id="new-email" label="New email address" onChange={(value) => setEmailChangeNewEmail(value)} type="email" value={emailChangeNewEmail} />}
+            {emailChangeStep === "verify" && <TextField autoComplete="off" id="new-email-code" inputMode="numeric" label="Verification code" maxLength={6} onChange={(value) => setEmailChangeNewCode(value)} placeholder="000000" value={emailChangeNewCode} />}
+            {emailChangeStep === "password" && <PasswordField autoComplete="current-password" id="confirm-password" label="Account password" onChange={(value) => setEmailChangePassword(value)} value={emailChangePassword} />}
+            {emailChangeError && <div className="entry-form-error">{emailChangeError}</div>}
+          </div>
+          <footer className="settings-confirm__footer">
+            <Button loading={busyAction?.startsWith("email-change")} type="submit"><Mail aria-hidden="true" />{emailChangeStep === "current" ? "Verify current email" : emailChangeStep === "new" ? "Send verification to new email" : emailChangeStep === "verify" ? "Verify new email" : "Complete email change"}</Button>
+            <Button disabled={busyAction?.startsWith("email-change")} onClick={() => setEmailChangeModalOpen(false)} variant="ghost">Cancel</Button>
+          </footer>
+        </motion.form>
+      </motion.div>
+    );
+  }
+
+  function renderAccountReactivateModal() {
+    return (
+      <motion.div animate={{ opacity: 1 }} aria-labelledby="account-reactivate-title" aria-modal="true" className="settings-confirm" exit={{ opacity: 0 }} initial={{ opacity: 0 }} role="dialog">
+        <motion.form animate={{ scale: 1, y: 0 }} className="settings-confirm__panel" exit={{ scale: 0.98, y: 10 }} initial={{ scale: 0.98, y: 10 }} onSubmit={handleReactivateAccount}>
+          <header className="settings-confirm__header">
+            <div><p>Account recovery</p><h2 id="account-reactivate-title">Reactivate account</h2></div>
+            <button aria-label="Close confirmation" disabled={busyAction === "reactivate-account"} onClick={() => setAccountReactivateModalOpen(false)} type="button"><X aria-hidden="true" /></button>
+          </header>
+          <div className="settings-confirm__body">
+            <p>Enter your email address and answer your security questions to reactivate your account.</p>
+            <TextField autoComplete="email" id="reactivate-email" label="Email address" onChange={(value) => setReactivateEmail(value)} type="email" value={reactivateEmail} />
+            <div style={{ marginTop: '1rem' }}>
+              <label className="dashboard-textarea"><span>Security question answers</span>
+                {reactivateAnswers.map((answer: string, index: number) => (
+                  <input key={index} autoComplete="off" placeholder={`Answer to security question ${index + 1}`} style={{ marginTop: '0.5rem', width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} value={answer} onChange={(e) => { const a = [...reactivateAnswers]; a[index] = e.target.value; setReactivateAnswers(a); }} />
+                ))}
+              </label>
+            </div>
+            {reactivateError && <div className="entry-form-error">{reactivateError}</div>}
+          </div>
+          <footer className="settings-confirm__footer">
+            <Button loading={busyAction === "reactivate-account"} type="submit"><RefreshCw aria-hidden="true" />Reactivate account</Button>
+            <Button disabled={busyAction === "reactivate-account"} onClick={() => setAccountReactivateModalOpen(false)} variant="ghost">Cancel</Button>
+          </footer>
+        </motion.form>
+      </motion.div>
     );
   }
 
@@ -1992,6 +2598,7 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
   }
 
   function renderSettings() {
+
     const settingsCategories = [
       { id: "general", label: "General", icon: Settings },
       { id: "security", label: "Security", icon: ShieldCheck },
@@ -2246,10 +2853,17 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
                         min="5"
                         onChange={(event) => updateSettingsPreference("clipboardClearSeconds", event.target.value)}
                         type="number"
-                        value={settingsPreferences.clipboardClearSeconds}
+                         value={settingsPreferences.clipboardClearSeconds}
                       />
                     </div>
                   </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel__header">
+                    <h3>Advanced Security</h3>
+                  </div>
+                  <EmergencyLockShortcutCard onEnable={handleEmergencyLockEnable} />
                 </section>
               </>
             )}
@@ -2466,42 +3080,71 @@ export function DashboardPage({ initialMe, onSignOut }: DashboardPageProps) {
             )}
 
             {activeSettingsCategory === "account" && (
-              <section className="settings-panel">
-                <div className="settings-panel__header">
-                  <h3>Account Information</h3>
-                </div>
-                <div className="settings-profile">
-                  <div className="settings-profile__row">
-                    <strong>{displayEmail}</strong>
-                    <span>{me.user.emailVerified ? "Verified email" : "Email verification required"}</span>
+              <div className="settings-layout">
+                {/* Account Overview Card */}
+                <div className="settings-card">
+                  <div className="settings-card__header">
+                    <UserRound aria-hidden="true" />
+                    <h3>Account Overview</h3>
                   </div>
-                  <StatusLine label="Protected session" ok={Boolean(me.activeSessionId)} value="Active" />
-                  <StatusLine label="Recovery questions" ok={me.securityQuestionsConfigured} />
+                  <div style={{ display: 'grid', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '8px', wordBreak: 'break-all' }}>{displayEmail}</div>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px', borderRadius: '12px', background: me.user.emailVerified ? 'rgba(125, 255, 174, 0.1)' : 'rgba(255, 109, 135, 0.1)', color: me.user.emailVerified ? 'var(--sl-text-success)' : 'var(--sl-text-danger)', fontSize: '0.85rem', fontWeight: '500' }}>
+                        {me.user.emailVerified ? <CheckCircle2 size={14} aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+                        {me.user.emailVerified ? "Verified" : "Verification required"}
+                      </div>
+                    </div>
+                    <div style={{ borderTop: '1px solid var(--sl-border-primary)', paddingTop: '12px', display: 'grid', gap: '8px' }}>
+                      <StatusLine label="Protected session" ok={Boolean(me.activeSessionId)} value="Active" />
+                      <StatusLine label="Recovery questions" ok={me.securityQuestionsConfigured} />
+                    </div>
+                  </div>
                 </div>
-                <div className="settings-panel__header" style={{ marginTop: '2rem' }}>
-                  <h3>Security</h3>
+
+                {/* Security Actions Card */}
+                <div className="settings-card">
+                  <div className="settings-card__header">
+                    <Shield aria-hidden="true" />
+                    <h3>Security Actions</h3>
+                  </div>
+                  <div className="settings-card__actions" style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                    <Button onClick={openPasswordModal} style={{ height: '44px' }}>
+                      <KeyRound aria-hidden="true" />
+                      Change password
+                    </Button>
+                    <Button onClick={() => { setEmailChangeModalOpen(true); setEmailChangeCodeSent(false); }} variant="ghost" style={{ height: '44px' }}>
+                      <Mail aria-hidden="true" />
+                      Change email
+                    </Button>
+                  </div>
                 </div>
-                <div className="settings-actions">
-                  <Button onClick={openPasswordModal}>
-                    <KeyRound aria-hidden="true" />
-                    Change password
-                  </Button>
+
+                {/* Danger Zone Card */}
+                <div className="settings-card settings-card--danger" style={{ gridColumn: '1 / -1', marginTop: '24px' }}>
+                  <div className="settings-card__header">
+                    <AlertTriangle aria-hidden="true" />
+                    <h3>Danger Zone</h3>
+                  </div>
+                  <p style={{ color: 'var(--sl-text-muted)', fontSize: '0.9rem', margin: '0 0 16px 0', paddingTop: '16px', borderTop: '1px solid var(--sl-border-primary)' }}>
+                    Destructive requests require password confirmation before they continue.
+                  </p>
+                  <div className="settings-card__actions" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <Button onClick={() => setAccountDisableModalOpen(true)} variant="ghost" style={{ height: '44px' }}>
+                      <Pause aria-hidden="true" />
+                      Temporarily disable account
+                    </Button>
+                    <Button onClick={() => openSettingsConfirmation("delete-vault")} variant="ghost" style={{ height: '44px' }}>
+                      <Trash2 aria-hidden="true" />
+                      Delete vault data
+                    </Button>
+                    <Button onClick={() => openSettingsConfirmation("delete-account")} variant="ghost" style={{ height: '44px' }}>
+                      <Trash aria-hidden="true" />
+                      Delete account
+                    </Button>
+                  </div>
                 </div>
-                <div className="settings-panel__header" style={{ marginTop: '2rem' }}>
-                  <h3>Danger Zone</h3>
-                </div>
-                <p className="panel-copy">Destructive requests require password confirmation before they continue.</p>
-                <div className="settings-actions">
-                  <Button onClick={() => openSettingsConfirmation("delete-vault")} variant="ghost">
-                    <Trash2 aria-hidden="true" />
-                    Delete vault data
-                  </Button>
-                  <Button onClick={() => openSettingsConfirmation("delete-account")} variant="ghost">
-                    <ShieldAlert aria-hidden="true" />
-                    Delete account
-                  </Button>
-                </div>
-              </section>
+              </div>
             )}
           </div>
         </section>

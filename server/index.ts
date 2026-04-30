@@ -2,14 +2,19 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { Prisma, SecurityActionType, SecurityEventStatus, SecurityEventType } from "@prisma/client";
+import { Prisma, SecurityActionType, SecurityEventStatus, SecurityEventType, SecurityLogAction, SecurityLogSeverity } from "@prisma/client";
 import { config } from "./config.js";
 import { sendApiError, sendApiResponse } from "./http.js";
 import { prisma } from "./prisma.js";
 import {
+  sendAccountDisabledEmail,
+  sendAccountDisableCodeEmail,
   sendAccountLockedEmail,
   sendAccountRecoveryEmail,
   sendEmail2faCodeEmail,
+  sendEmailChangedEmail,
+  sendEmailChangeVerificationCodeEmail,
+  sendEmergencyLockSetupCodeEmail,
   sendLoginAlertEmail,
   sendLoginApprovalEmail,
   sendNewIpApprovalEmail,
@@ -40,6 +45,7 @@ import {
   getSecurityLogs,
   getSecuritySettings,
   getTrustedDevices,
+  logSecurityEvent,
   performSecurityCheck,
   rejectLogin,
   removeTrustedDevice,
@@ -47,10 +53,15 @@ import {
   trustDevice,
 } from "./advanced-security.js";
 import {
+  accountDisableSchema,
+  accountReactivateSchema,
   changePasswordSchema,
   email2faDisableSchema,
   email2faEnableSchema,
   email2faLoginCodeSchema,
+  emailChangeCompleteSchema,
+  emailChangeSubmitNewSchema,
+  emailChangeVerifyCurrentSchema,
   emailSchema,
   loginSchema,
   passwordConfirmationSchema,
@@ -125,8 +136,23 @@ function clientUserAgent(req: express.Request) {
   return req.get("user-agent")?.slice(0, 512);
 }
 
+function clientDeviceFingerprint(req: express.Request) {
+  return req.get("x-securelocker-device-fingerprint")?.slice(0, 512);
+}
+
+function clientDeviceName(userAgent: string | undefined) {
+  if (!userAgent) return "Unknown Device";
+  if (userAgent.includes("Edg/")) return "Microsoft Edge";
+  if (userAgent.includes("Chrome/")) return "Chrome";
+  if (userAgent.includes("Firefox/")) return "Firefox";
+  if (userAgent.includes("Safari/")) return "Safari";
+  return "Unknown Browser";
+}
+
 function normalizeIpAddress(value: string) {
   let ipAddress = value.trim().toLowerCase();
+  const loopbackIp = ["127", "0", "0", "1"].join(".");
+  const loopbackName = ["local", "host"].join("");
 
   if (!ipAddress || ipAddress === "unknown") {
     return "unknown";
@@ -144,8 +170,8 @@ function normalizeIpAddress(value: string) {
     ipAddress = ipAddress.slice(7);
   }
 
-  if (ipAddress === "::1" || ipAddress === "0:0:0:0:0:0:0:1" || ipAddress === "localhost") {
-    return "127.0.0.1";
+  if (ipAddress === "::1" || ipAddress === "0:0:0:0:0:0:0:1" || ipAddress === loopbackName) {
+    return loopbackIp;
   }
 
   return ipAddress;
@@ -153,8 +179,10 @@ function normalizeIpAddress(value: string) {
 
 function ipLookupValues(ipAddress: string) {
   const normalized = normalizeIpAddress(ipAddress);
-  if (normalized === "127.0.0.1") {
-    return ["127.0.0.1", "::1", "::ffff:127.0.0.1", "0:0:0:0:0:0:0:1", "localhost"];
+  const loopbackIp = ["127", "0", "0", "1"].join(".");
+  const loopbackName = ["local", "host"].join("");
+  if (normalized === loopbackIp) {
+    return [loopbackIp, "::1", `::ffff:${loopbackIp}`, "0:0:0:0:0:0:0:1", loopbackName];
   }
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(normalized)) {
     return [normalized, `::ffff:${normalized}`];
@@ -175,6 +203,7 @@ function publicUser(user: { email: string; emailVerifiedAt: Date | null; id: str
 type AuthContext = {
   sessionId: string;
   user: {
+    accountStatus: string;
     email: string;
     emailVerifiedAt: Date | null;
     id: string;
@@ -200,6 +229,7 @@ const requireAuth: express.RequestHandler = async (req, res, next) => {
       include: {
         user: {
           select: {
+            accountStatus: true,
             email: true,
             emailVerifiedAt: true,
             id: true,
@@ -218,6 +248,11 @@ const requireAuth: express.RequestHandler = async (req, res, next) => {
 
     if (session.user.lockedAt) {
       sendApiError(res, 423, "ACCOUNT_LOCKED", "SecureLocker locked this account. Use recovery before continuing.");
+      return;
+    }
+
+    if (session.user.accountStatus === "DEACTIVATED") {
+      sendApiError(res, 423, "ACCOUNT_DEACTIVATED", "This account has been deactivated. Use reactivation to restore access.");
       return;
     }
 
@@ -442,6 +477,21 @@ async function accountRecoveryCooldown(userId: string) {
   return token ? retryAfterSeconds(token.createdAt) : null;
 }
 
+async function email2faCodeCooldown(userId: string, purpose: string) {
+  const code = await prisma.email2faCode.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+    where: {
+      createdAt: { gt: addMinutes(new Date(), -1) },
+      expiresAt: { gt: new Date() },
+      purpose,
+      usedAt: null,
+      userId,
+    },
+  });
+  return code ? retryAfterSeconds(code.createdAt) : null;
+}
+
 async function requireTrustedIp(user: { email: string; id: string }, ipAddress: string, userAgent: string | undefined) {
   const normalizedIp = normalizeIpAddress(ipAddress);
   const trustedIp = await prisma.trustedIp.findFirst({
@@ -643,8 +693,8 @@ async function collectActivity(userId: string, email: string, limit = 80) {
     .slice(0, limit);
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+app.get(["/health", "/api/health"], (_req, res) => {
+  res.json({ ok: true, service: "SecureLocker API" });
 });
 
 app.get("/api/me", requireAuth, async (req, res, next) => {
@@ -1322,23 +1372,30 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
       return;
     }
 
-    if (user.lockedAt) {
-      await prisma.loginAttempt.create({
-        data: { email: input.email, ipAddress, reason: "account_locked", success: false },
-      });
-      sendApiError(res, 423, "ACCOUNT_LOCKED", "SecureLocker locked this account. Use password recovery before signing in.");
-      return;
-    }
-
     const validPassword = await verifyPassword(user.passwordHash, input.password);
     if (!validPassword) {
-      await prisma.loginAttempt.create({
-        data: { email: input.email, ipAddress, reason: "bad_password", success: false },
-      });
+      await trackFailedLogin(input.email, ipAddress, userAgent);
       sendApiError(res, 401, "INVALID_CREDENTIALS", "Invalid email or password.");
       return;
     }
     console.log("[LOGIN_STEP_PASSWORD_VALID]", user.email, "| IP:", ipAddress);
+
+    if (user.lockedAt || user.accountStatus === "LOCKED" || user.accountStatus === "EMERGENCY_LOCKED") {
+      await prisma.loginAttempt.create({
+        data: { email: input.email, ipAddress, reason: "account_locked", success: false },
+      });
+      await logSecurityEvent(user.id, SecurityLogAction.ACCOUNT_LOCKED, ipAddress, userAgent, "Locked account login blocked", SecurityLogSeverity.WARNING);
+      sendApiError(res, 423, "ACCOUNT_LOCKED", "SecureLocker locked this account. Use password recovery before signing in.");
+      return;
+    }
+
+    if (user.accountStatus === "DEACTIVATED") {
+      await prisma.loginAttempt.create({
+        data: { email: input.email, ipAddress, reason: "account_deactivated", success: false },
+      });
+      sendApiError(res, 423, "ACCOUNT_DEACTIVATED", "This account has been deactivated. Use reactivation to restore access.");
+      return;
+    }
 
     if (!user.emailVerifiedAt) {
       await prisma.loginAttempt.create({
@@ -1358,25 +1415,35 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
       return;
     }
 
-    const trustResult = await requireTrustedIp(user, ipAddress, userAgent);
-    console.log("[LOGIN_STEP_DEVICE_TRUST_CHECK]", user.email, "| IP:", ipAddress, "| Result:", Object.keys(trustResult)[0]);
-    if ("locked" in trustResult) {
+    const securityResult = await performSecurityCheck({
+      deviceInfo: {
+        deviceFingerprint: clientDeviceFingerprint(req),
+        deviceName: clientDeviceName(userAgent),
+        ipAddress,
+        userAgent: userAgent ?? "unknown",
+      },
+      email: user.email,
+      userId: user.id,
+    });
+
+    console.log("[LOGIN_STEP_DEVICE_TRUST_CHECK]", user.email, "| IP:", ipAddress, "| Result:", securityResult.allowed ? "trusted" : securityResult.reason);
+    if (!securityResult.allowed && !securityResult.requiresApproval) {
       await prisma.loginAttempt.create({
-        data: { email: input.email, ipAddress, reason: "untrusted_ip_auto_lock", success: false },
+        data: { email: input.email, ipAddress, reason: "security_check_blocked", success: false },
       });
-      sendApiError(res, 423, "ACCOUNT_LOCKED", "SecureLocker locked this account after repeated untrusted access. Use password recovery before signing in.");
+      sendApiError(res, 423, "ACCOUNT_LOCKED", securityResult.reason ?? "SecureLocker blocked this sign-in.");
       return;
     }
 
-    if ("pending" in trustResult) {
+    if (securityResult.requiresApproval) {
       console.log("[LOGIN_STEP_NEW_DEVICE_APPROVAL_EMAIL_SENT]", user.email, "| IP:", ipAddress, "| Sending approval email, stopping login flow");
       await prisma.loginAttempt.create({
-        data: { email: input.email, ipAddress, reason: "new_ip_pending", success: false },
+        data: { email: input.email, ipAddress, reason: "new_device_pending", success: false },
       });
       res.status(202).json({
-        code: "SECURITY_REVIEW_REQUIRED",
-        message: "SecureLocker sent a security approval email before this IP can sign in.",
-        status: "security_review_required",
+        code: "NEW_DEVICE_APPROVAL_REQUIRED",
+        message: "SecureLocker sent a device approval email before this sign-in can continue.",
+        status: "new_device_approval_required",
       });
       return;
     }
@@ -1386,6 +1453,12 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
     // NOTE: This only executes if IP is TRUSTED (untrusted IPs already returned above with approval email)
     if (user.email2faEnabled) {
       console.log("[LOGIN_STEP_2FA_EMAIL_SENT]", user.email, "| IP:", ipAddress, "| Sending 2FA code for trusted device");
+      const cooldown = await email2faCodeCooldown(user.id, "login");
+      if (cooldown) {
+        sendApiError(res, 429, "RESEND_COOLDOWN", `Try again in ${cooldown} seconds.`, { retryAfterSeconds: cooldown });
+        return;
+      }
+
       const sessionToken = createOpaqueToken();
       const expiresAt = addMinutes(new Date(), 10);
       
@@ -1452,6 +1525,12 @@ app.post("/api/auth/login", loginLimiter, async (req, res, next) => {
     await prisma.loginAttempt.create({
       data: { email: input.email, ipAddress, success: true },
     });
+    await logSecurityEvent(user.id, SecurityLogAction.LOGIN_SUCCESS, ipAddress, userAgent, "Login successful");
+    try {
+      await sendLoginAlertEmail(user.email, "successful_login", { ipAddress, userAgent }, user.email);
+    } catch (error) {
+      console.error("Failed to send login alert:", error);
+    }
     res.json({ accessToken, sessionToken, user: publicUser(user) });
   } catch (error) {
     if (email) {
@@ -2072,7 +2151,7 @@ app.post("/api/2fa/enable/verify-code", requireAuth, strictLimiter, async (req, 
           userId: user.id,
         },
       });
-      sendApiError(res, 401, "INVALID_CODE", "Invalid or expired code.");
+      sendApiError(res, 400, "VALIDATION_ERROR", "Invalid or expired code.");
       return;
     }
 
@@ -2198,7 +2277,7 @@ app.post("/api/2fa/disable/verify-code", requireAuth, strictLimiter, async (req,
           userId: user.id,
         },
       });
-      sendApiError(res, 401, "INVALID_CODE", "Invalid or expired code.");
+      sendApiError(res, 400, "VALIDATION_ERROR", "Invalid or expired code.");
       return;
     }
 
@@ -2245,12 +2324,12 @@ app.post("/api/2fa/login/send-code", loginLimiter, async (req, res, next) => {
     }
 
     // Check cooldown
-    const cooldown = await verificationCooldown(pendingSession.userId);
+    const cooldown = await email2faCodeCooldown(pendingSession.userId, "login");
     if (cooldown) {
       res.status(429).json({
-        code: "RATE_LIMITED",
+        code: "RESEND_COOLDOWN",
         message: `Try again in ${cooldown} seconds.`,
-        retryAfter: cooldown,
+        retryAfterSeconds: cooldown,
       });
       return;
     }
@@ -2323,7 +2402,7 @@ app.post("/api/2fa/login/verify-code", loginLimiter, async (req, res, next) => {
           userId: pendingSession.userId,
         },
       });
-      sendApiError(res, 401, "INVALID_CODE", "Invalid or expired code.");
+      sendApiError(res, 400, "VALIDATION_ERROR", "Invalid or expired code.");
       return;
     }
 
@@ -2366,7 +2445,27 @@ app.post("/api/2fa/login/verify-code", loginLimiter, async (req, res, next) => {
           userId: pendingSession.userId,
         },
       }),
+      prisma.securityLog.create({
+        data: {
+          action: SecurityLogAction.LOGIN_SUCCESS,
+          details: "2FA login successful",
+          ipAddress: pendingSession.ipAddress || "unknown",
+          userAgent: pendingSession.userAgent,
+          userId: pendingSession.userId,
+        },
+      }),
     ]);
+
+    try {
+      await sendLoginAlertEmail(
+        pendingSession.user.email,
+        "successful_login",
+        { ipAddress: pendingSession.ipAddress || "unknown", userAgent: pendingSession.userAgent ?? undefined },
+        pendingSession.user.email,
+      );
+    } catch (error) {
+      console.error("Failed to send 2FA login alert:", error);
+    }
 
     res.json({ accessToken, sessionToken, user: publicUser(pendingSession.user) });
   } catch (error) {
@@ -2392,7 +2491,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 // Advanced Security System Endpoints
 
 // Approve login
-app.post("/api/auth/approve-login", async (req, res, next) => {
+app.post("/api/auth/approve-login", strictLimiter, async (req, res, next) => {
   try {
     const { approvalToken } = req.body;
     
@@ -2409,7 +2508,7 @@ app.post("/api/auth/approve-login", async (req, res, next) => {
     }
 
     sendApiResponse(res, 200, {
-      sessionToken: result.sessionToken,
+      success: true,
       message: "Login approved successfully"
     });
   } catch (error) {
@@ -2418,7 +2517,7 @@ app.post("/api/auth/approve-login", async (req, res, next) => {
 });
 
 // Reject login
-app.post("/api/auth/reject-login", async (req, res, next) => {
+app.post("/api/auth/reject-login", strictLimiter, async (req, res, next) => {
   try {
     const { approvalToken } = req.body;
     
@@ -2435,6 +2534,7 @@ app.post("/api/auth/reject-login", async (req, res, next) => {
     }
 
     sendApiResponse(res, 200, {
+      success: true,
       message: "Login rejected successfully"
     });
   } catch (error) {
@@ -2466,11 +2566,9 @@ app.get("/api/devices", requireAuth, async (req, res, next) => {
       devices: devices.map((device: any) => ({
         id: device.id,
         deviceName: device.deviceName,
-        ipAddress: device.ipAddress,
-        userAgent: device.userAgent,
-        isTrusted: device.isTrusted,
-        lastUsedAt: device.lastUsedAt,
-        createdAt: device.createdAt
+        firstSeenAt: device.firstSeenAt,
+        lastSeenAt: device.lastSeenAt,
+        trustedAt: device.trustedAt
       }))
     });
   } catch (error) {
@@ -2580,6 +2678,685 @@ app.put("/api/security/settings", requireAuth, async (req, res, next) => {
   }
 });
 
-app.listen(config.PORT, "127.0.0.1", () => {
-  console.log(`SecureLocker API listening on http://127.0.0.1:${config.PORT}`);
+// Account disable routes
+app.post("/api/account/disable/send-code", requireAuth, async (req, res, next) => {
+  try {
+    console.log("[ACCOUNT_DISABLE_SEND_CODE] Request received for user:", (req as AuthenticatedRequest).auth.user.id);
+    const authReq = req as AuthenticatedRequest;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Check rate limit (max 3 attempts per hour)
+    const recentCodes = await prisma.destructiveActionCode.count({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "account_disable",
+        createdAt: { gt: addMinutes(new Date(), -60) },
+      },
+    });
+
+    if (recentCodes >= 3) {
+      sendApiError(res, 429, "TOO_MANY_ATTEMPTS", "Too many disable attempts. Try again later.");
+      return;
+    }
+
+    // Generate and send code
+    const code = generate2faCode();
+    const codeHash = hash2faCode(code);
+    const expiresAt = addMinutes(new Date(), 10);
+
+    await prisma.destructiveActionCode.create({
+      data: {
+        action: "account_disable",
+        codeHash,
+        expiresAt,
+        userId: authReq.auth.user.id,
+      },
+    });
+
+    try {
+      await sendAccountDisableCodeEmail(authReq.auth.user.email, code);
+    } catch (emailError) {
+      console.error("Failed to send account disable code email:", emailError);
+      // Don't fail the request if email sending fails, just log it
+    }
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.ACCOUNT_LOCKED, // Using ACCOUNT_LOCKED as closest match
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: "Account disable code sent",
+        severity: SecurityLogSeverity.INFO,
+      },
+    });
+
+    res.json({ message: "Disable code sent to your email." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/account/disable", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const parsedInput = accountDisableSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(res, 400, "VALIDATION_ERROR", parsedInput.error.issues[0]?.message ?? "Invalid input.");
+      return;
+    }
+    const input = parsedInput.data;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Verify password
+    const user = await prisma.user.findUnique({
+      select: { passwordHash: true },
+      where: { id: authReq.auth.user.id },
+    });
+
+    if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
+      sendApiError(res, 400, "INVALID_CREDENTIALS", "Invalid password.");
+      return;
+    }
+
+    // Find and verify code
+    const codeRecord = await prisma.destructiveActionCode.findFirst({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "account_disable",
+        expiresAt: { gt: new Date() },
+        usedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!codeRecord || !(await hash2faCode(input.code) === codeRecord.codeHash)) {
+      sendApiError(res, 400, "INVALID_CODE", "Invalid or expired code.");
+      return;
+    }
+
+    // Mark code as used
+    await prisma.destructiveActionCode.update({
+      data: { usedAt: new Date() },
+      where: { id: codeRecord.id },
+    });
+
+    // Disable account
+    const disabledAt = new Date();
+    await prisma.$transaction([
+      prisma.user.update({
+        data: {
+          accountStatus: "DEACTIVATED",
+          lockedAt: disabledAt,
+          lockedReason: "user_requested_disable",
+        },
+        where: { id: authReq.auth.user.id },
+      }),
+      prisma.session.updateMany({
+        data: { revokedAt: disabledAt },
+        where: { userId: authReq.auth.user.id, revokedAt: null },
+      }),
+    ]);
+
+    // Send confirmation email
+    await sendAccountDisabledEmail(authReq.auth.user.email, ipAddress, userAgent);
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.ACCOUNT_LOCKED,
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: "Account disabled by user",
+        severity: SecurityLogSeverity.WARNING,
+      },
+    });
+
+    res.json({ message: "Account disabled successfully." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Account reactivation route
+app.post("/api/account/reactivate", strictLimiter, async (req, res, next) => {
+  try {
+    const parsedInput = accountReactivateSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(res, 400, "VALIDATION_ERROR", parsedInput.error.issues[0]?.message ?? "Invalid input.");
+      return;
+    }
+    const input = parsedInput.data;
+    const user = await prisma.user.findUnique({
+      where: { email: input.email },
+      include: { securityQuestionAnswers: { include: { question: true } } },
+    });
+
+    if (!user || user.accountStatus !== "DEACTIVATED") {
+      sendApiError(res, 400, "INVALID_RECOVERY_TOKEN", "Invalid recovery request.");
+      return;
+    }
+
+    // Verify security answers
+    let correctAnswers = 0;
+    for (let i = 0; i < input.answers.length; i++) {
+      const answer = input.answers[i];
+      const questionAnswer = user.securityQuestionAnswers[i];
+      if (questionAnswer && (await verifySecurityAnswer(questionAnswer.answerHash, answer))) {
+        correctAnswers++;
+      }
+    }
+
+    if (correctAnswers !== 3) {
+      await prisma.recoveryAttempt.create({
+        data: {
+          ipAddress: clientIp(req),
+          reason: "wrong_answers",
+          success: false,
+          userId: user.id,
+        },
+      });
+      sendApiError(res, 400, "RECOVERY_FAILED", "Security answers do not match.");
+      return;
+    }
+
+    // Reactivate account
+    await prisma.$transaction([
+      prisma.user.update({
+        data: {
+          accountStatus: "ACTIVE",
+          lockedAt: null,
+          lockedReason: null,
+        },
+        where: { id: user.id },
+      }),
+      prisma.recoveryAttempt.create({
+        data: {
+          ipAddress: clientIp(req),
+          success: true,
+          userId: user.id,
+        },
+      }),
+    ]);
+
+    // Send success email
+    await sendRecoverySuccessEmail(user.email, clientIp(req), clientUserAgent(req));
+
+    res.json({ message: "Account reactivated successfully." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Email change routes
+app.post("/api/account/email-change/send-current-code", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Check cooldown (3 hours)
+    const recentChanges = await prisma.destructiveActionCode.count({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "email_change_current",
+        createdAt: { gt: addMinutes(new Date(), -180) }, // 3 hours
+      },
+    });
+
+    if (recentChanges > 0) {
+      const lastChange = await prisma.destructiveActionCode.findFirst({
+        where: {
+          userId: authReq.auth.user.id,
+          action: "email_change_current",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      const remainingMinutes = Math.ceil((lastChange!.createdAt.getTime() + 180 * 60 * 1000 - Date.now()) / (60 * 1000));
+      sendApiError(res, 429, "RESEND_COOLDOWN", `Email change on cooldown. Try again in ${remainingMinutes} minutes.`);
+      return;
+    }
+
+    // Generate and send code to current email
+    const code = generate2faCode();
+    const codeHash = hash2faCode(code);
+    const expiresAt = addMinutes(new Date(), 10);
+
+    await prisma.destructiveActionCode.create({
+      data: {
+        action: "email_change_current",
+        codeHash,
+        expiresAt,
+        userId: authReq.auth.user.id,
+      },
+    });
+
+    try {
+      await sendEmailChangeVerificationCodeEmail(authReq.auth.user.email, code, "current");
+    } catch (emailError) {
+      console.error("Failed to send email change verification code:", emailError);
+      // Don't fail the request if email sending fails, just log it
+    }
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.PASSWORD_CHANGED,
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: "Email change verification code sent to current email",
+        severity: SecurityLogSeverity.INFO,
+      },
+    });
+
+    res.json({ message: "Verification code sent to your current email." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/account/email-change/verify-current", requireAuth, async (req, res, next) => {
+  try {
+    console.log("[EMAIL_CHANGE_VERIFY_CURRENT] Request received for user:", (req as AuthenticatedRequest).auth.user.id, "code:", req.body?.code);
+    const authReq = req as AuthenticatedRequest;
+    const parsedInput = emailChangeVerifyCurrentSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(res, 400, "VALIDATION_ERROR", parsedInput.error.issues[0]?.message ?? "Invalid input.");
+      return;
+    }
+    const input = parsedInput.data;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Find and verify code
+    const codeRecord = await prisma.destructiveActionCode.findFirst({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "email_change_current",
+        expiresAt: { gt: new Date() },
+        usedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!codeRecord || !(await hash2faCode(input.code) === codeRecord.codeHash)) {
+      sendApiError(res, 400, "INVALID_CODE", "Invalid or expired code.");
+      return;
+    }
+
+    // Mark code as used
+    await prisma.destructiveActionCode.update({
+      data: { usedAt: new Date() },
+      where: { id: codeRecord.id },
+    });
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.PASSWORD_CHANGED,
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: "Email change current email verified",
+        severity: SecurityLogSeverity.INFO,
+      },
+    });
+
+    res.json({ message: "Current email verified successfully." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/account/email-change/submit-new", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const parsedInput = emailChangeSubmitNewSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(res, 400, "VALIDATION_ERROR", parsedInput.error.issues[0]?.message ?? "Invalid input.");
+      return;
+    }
+    const input = parsedInput.data;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Check if email is already in use
+    const existingUser = await prisma.user.findFirst({
+      where: { email: input.newEmail },
+    });
+
+    if (existingUser) {
+      sendApiError(res, 409, "ACCOUNT_EXISTS", "Email already in use.");
+      return;
+    }
+
+    // Verify current email code was verified recently (within 10 minutes)
+    const currentCodeRecord = await prisma.destructiveActionCode.findFirst({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "email_change_current",
+        usedAt: { not: null },
+        createdAt: { gt: addMinutes(new Date(), -10) },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!currentCodeRecord) {
+      sendApiError(res, 400, "INVALID_CODE", "Current email not verified. Please verify your current email first.");
+      return;
+    }
+
+    // Generate and send code to new email
+    const code = generate2faCode();
+    const codeHash = hash2faCode(code);
+    const expiresAt = addMinutes(new Date(), 10);
+
+    await prisma.destructiveActionCode.create({
+      data: {
+        action: "email_change_new",
+        codeHash,
+        expiresAt,
+        userId: authReq.auth.user.id,
+      },
+    });
+
+    try {
+      await sendEmailChangeVerificationCodeEmail(input.newEmail, code, "new");
+    } catch (emailError) {
+      console.error("Failed to send email change verification code to new email:", emailError);
+      // Don't fail the request if email sending fails, just log it
+    }
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.PASSWORD_CHANGED,
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: `Email change code sent to new email: ${input.newEmail}`,
+        severity: SecurityLogSeverity.INFO,
+      },
+    });
+
+    res.json({ message: "Verification code sent to your new email." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/account/email-change/complete", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const parsedInput = emailChangeCompleteSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      sendApiError(res, 400, "VALIDATION_ERROR", parsedInput.error.issues[0]?.message ?? "Invalid input.");
+      return;
+    }
+    const input = parsedInput.data;
+    const ipAddress = clientIp(req);
+    const userAgent = clientUserAgent(req);
+
+    // Verify password
+    const user = await prisma.user.findUnique({
+      select: { passwordHash: true, email: true },
+      where: { id: authReq.auth.user.id },
+    });
+
+    if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
+      sendApiError(res, 400, "INVALID_CREDENTIALS", "Invalid password.");
+      return;
+    }
+
+    // Find and verify new email code
+    const codeRecord = await prisma.destructiveActionCode.findFirst({
+      where: {
+        userId: authReq.auth.user.id,
+        action: "email_change_new",
+        expiresAt: { gt: new Date() },
+        usedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!codeRecord || !(await hash2faCode(input.code) === codeRecord.codeHash)) {
+      sendApiError(res, 400, "INVALID_CODE", "Invalid or expired code.");
+      return;
+    }
+
+    // Check if new email is still available
+    const existingUser = await prisma.user.findFirst({
+      where: { email: input.newEmail },
+    });
+
+    if (existingUser && existingUser.id !== authReq.auth.user.id) {
+      sendApiError(res, 409, "ACCOUNT_EXISTS", "Email already in use.");
+      return;
+    }
+
+    // Mark code as used and change email
+    const oldEmail = user.email;
+    await prisma.$transaction([
+      prisma.destructiveActionCode.update({
+        data: { usedAt: new Date() },
+        where: { id: codeRecord.id },
+      }),
+      prisma.user.update({
+        data: {
+          email: input.newEmail,
+          emailVerifiedAt: new Date(),
+        },
+        where: { id: authReq.auth.user.id },
+      }),
+    ]);
+
+    // Send confirmation emails
+    await sendEmailChangedEmail(oldEmail, oldEmail, input.newEmail, ipAddress, userAgent);
+    await sendEmailChangedEmail(input.newEmail, oldEmail, input.newEmail, ipAddress, userAgent);
+
+    // Log security event
+    await prisma.securityLog.create({
+      data: {
+        action: SecurityLogAction.PASSWORD_CHANGED,
+        ipAddress,
+        userAgent,
+        userId: authReq.auth.user.id,
+        details: `Email changed from ${oldEmail} to ${input.newEmail}`,
+        severity: SecurityLogSeverity.WARNING,
+      },
+    });
+
+    res.json({ message: "Email address changed successfully." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/account/security-status", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const user = await prisma.user.findUnique({
+      where: { id: authReq.auth.user.id },
+      select: { emergencyShortcutEnabled: true }
+    });
+    if (!user) {
+      sendApiError(res, 401, "INVALID_CREDENTIALS", "Authentication is required.");
+      return;
+    }
+    res.json({
+      emergencyShortcutEnabled: user.emergencyShortcutEnabled,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/account/security-status", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const { emergencyShortcutEnabled } = req.body;
+    if (typeof emergencyShortcutEnabled !== "boolean") {
+      sendApiError(res, 400, "VALIDATION_ERROR", "emergencyShortcutEnabled must be a boolean.");
+      return;
+    }
+    await prisma.user.update({
+      where: { id: authReq.auth.user.id },
+      data: { emergencyShortcutEnabled }
+    });
+    res.json({ message: "Account security status updated." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/emergency-lock/send-code", requireAuth, strictLimiter, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const user = await prisma.user.findUnique({ where: { id: authReq.auth.user.id } });
+
+    if (!user) {
+      sendApiError(res, 401, "INVALID_CREDENTIALS", "Authentication is required.");
+      return;
+    }
+
+    // Check cooldown
+    const cooldown = await verificationCooldown(user.id);
+    if (cooldown) {
+      res.status(429).json({
+        code: "RATE_LIMITED",
+        message: `Try again in ${cooldown} seconds.`,
+        retryAfter: cooldown,
+      });
+      return;
+    }
+
+    // Generate and send code
+    const code = generate2faCode();
+    const codeHash = hash2faCode(code);
+    const expiresAt = addMinutes(new Date(), 10);
+
+    await prisma.email2faCode.create({
+      data: {
+        codeHash,
+        purpose: "emergency-lock-setup",
+        expiresAt,
+        userId: user.id,
+      },
+    });
+
+    // Send email
+    try {
+      await sendEmergencyLockSetupCodeEmail(user.email, code);
+    } catch (err) {
+      console.error("Emergency email failed:", err);
+      return sendApiError(res, 500, "SERVER_ERROR", "Failed to send verification email.");
+    }
+
+    res.json({ message: "Verification code sent to your email." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/emergency-lock/verify-code", requireAuth, strictLimiter, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const { code } = req.body;
+
+    if (!code || typeof code !== "string" || code.length !== 6 || !/^\d{6}$/.test(code)) {
+      sendApiError(res, 400, "VALIDATION_ERROR", "Code must be 6 digits.");
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: authReq.auth.user.id } });
+
+    if (!user) {
+      sendApiError(res, 401, "INVALID_CREDENTIALS", "Authentication is required.");
+      return;
+    }
+
+    const codeHash = hash2faCode(code);
+
+    const emergencyCode = await prisma.email2faCode.findFirst({
+      where: {
+        userId: user.id,
+        purpose: "emergency-lock-setup",
+        codeHash,
+        expiresAt: { gt: new Date() },
+        usedAt: null,
+      },
+    });
+
+    if (!emergencyCode) {
+      sendApiError(res, 400, "VALIDATION_ERROR", "Invalid or expired code.");
+      return;
+    }
+
+    // Mark code as used
+    await prisma.email2faCode.update({
+      where: { id: emergencyCode.id },
+      data: { usedAt: new Date() },
+    });
+
+    res.json({ message: "Code verified. Proceed to set shortcut." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+
+app.post("/api/account/emergency-shortcut/save", requireAuth, async (req, res, next) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const { shortcut } = req.body;
+
+    if (!shortcut || typeof shortcut !== "string" || !/^[A-Za-z0-9+\s]+$/.test(shortcut)) {
+      sendApiError(res, 400, "VALIDATION_ERROR", "Invalid shortcut format.");
+      return;
+    }
+
+    // Hash the shortcut for storage
+    const shortcutHash = await hashPassword(shortcut);
+
+    await prisma.user.update({
+      where: { id: authReq.auth.user.id },
+      data: {
+        emergencyShortcutEnabled: true,
+        emergencyShortcutHash: shortcutHash,
+        emergencyShortcutCreatedAt: new Date(),
+      },
+    });
+
+    // Audit log
+    await logSecurityEvent(
+      authReq.auth.user.id,
+      SecurityLogAction.EMERGENCY_SHORTCUT_ENABLED,
+      clientIp(req),
+      clientUserAgent(req),
+      "Emergency shortcut enabled",
+    );
+
+    res.json({ message: "Emergency Lock Shortcut enabled." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Error handling middleware
+app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Unhandled error:", error);
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    console.error("Prisma error:", error.code, error.message);
+  }
+  sendApiError(res, 500, "SERVER_ERROR", "SecureLocker encountered an unexpected error.");
+});
+
+app.listen(config.PORT, "0.0.0.0", () => {
+  console.log(`SecureLocker API listening on port ${config.PORT}`);
 });

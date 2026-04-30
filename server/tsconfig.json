@@ -6,7 +6,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "../build/server",
+    "outDir": "../dist/server",
     "rootDir": ".",
     "types": ["node"]
   },

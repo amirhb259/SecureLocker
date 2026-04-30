@@ -95,6 +95,16 @@ function renderTextEmail(email: SecureEmail) {
     .join("\n\n");
 }
 
+export async function sendEmail({ to, subject, html }: { to: string; subject: string; html: string }) {
+  await transport.verify();
+  await transport.sendMail({
+    from: config.SMTP_FROM,
+    html,
+    subject,
+    to,
+  });
+}
+
 async function sendSecureMail(to: string, email: SecureEmail) {
   await transport.verify();
   await transport.sendMail({
@@ -202,10 +212,10 @@ export async function sendRecoverySuccessEmail(to: string, ipAddress: string, us
 export async function sendEmail2faCodeEmail(to: string, code: string, purpose: "login" | "disable") {
   console.log("sendLogin2FACodeEmail called for", to);
   const title = purpose === "login" ? "SecureLocker 2FA Login Code" : "Confirm disabling two-factor authentication";
-  const intro = purpose === "login" 
+  const intro = purpose === "login"
     ? `Enter this code to complete your SecureLocker sign-in. This code expires in 10 minutes and can only be used once.`
     : `Enter this code to disable two-factor authentication on your SecureLocker account. This code expires in 10 minutes and can only be used once.`;
-  
+
   await sendSecureMail(to, {
     actions: [],
     details: [
@@ -216,6 +226,20 @@ export async function sendEmail2faCodeEmail(to: string, code: string, purpose: "
     title,
   });
 }
+
+export async function sendEmergencyLockSetupCodeEmail(to: string, code: string) {
+  await sendSecureMail(to, {
+    actions: [],
+    details: [
+      { label: "Verification code", value: code },
+    ],
+    intro: `Enter this code in SecureLocker to continue setting up Emergency Lock Shortcut. This code expires in 5 minutes and can only be used once.`,
+    subject: "SecureLocker Emergency Lock Setup Code",
+    title: "Emergency Lock Setup Code",
+  });
+}
+
+
 
 // Advanced Security System Email Functions
 export async function sendLoginAlertEmail(
@@ -306,5 +330,64 @@ export async function sendSuspiciousLoginEmail(to: string, deviceInfo: { ipAddre
     intro: "We detected a suspicious sign-in attempt on your SecureLocker account. This sign-in was blocked for your security. If this was you, please review your security settings.",
     subject: "Suspicious sign-in blocked on SecureLocker",
     title: "Suspicious activity detected",
+  });
+}
+
+export async function sendAccountDisableCodeEmail(to: string, code: string) {
+  await sendSecureMail(to, {
+    actions: [],
+    details: [
+      { label: "Verification code", value: code },
+    ],
+    intro: "Enter this code to confirm disabling your SecureLocker account. This code expires in 10 minutes and can only be used once.",
+    subject: "Disable SecureLocker account verification",
+    title: "Confirm account disable",
+  });
+}
+
+export async function sendAccountDisabledEmail(to: string, ipAddress: string, userAgent?: string | null) {
+  await sendSecureMail(to, {
+    actions: [{ label: "Reactivate account", url: `${config.FRONTEND_URL}/auth` }],
+    details: [
+      { label: "IP address", value: ipAddress },
+      { label: "Device", value: userAgent || "Unknown" },
+      { label: "Time", value: new Date().toLocaleString() },
+    ],
+    intro: "Your SecureLocker account has been temporarily disabled. You can reactivate it using your security questions.",
+    subject: "SecureLocker account disabled",
+    title: "Account disabled",
+  });
+}
+
+export async function sendEmailChangeVerificationCodeEmail(to: string, code: string, purpose: "current" | "new") {
+  const title = purpose === "current" ? "Verify current email for change" : "Verify new email address";
+  const intro = purpose === "current"
+    ? "Enter this code to verify your current email before changing it. This code expires in 10 minutes and can only be used once."
+    : "Enter this code to verify your new email address. This code expires in 10 minutes and can only be used once.";
+
+  await sendSecureMail(to, {
+    actions: [],
+    details: [
+      { label: "Verification code", value: code },
+    ],
+    intro,
+    subject: purpose === "current" ? "SecureLocker email change verification" : "Verify new SecureLocker email",
+    title,
+  });
+}
+
+export async function sendEmailChangedEmail(to: string, oldEmail: string, newEmail: string, ipAddress: string, userAgent?: string | null) {
+  await sendSecureMail(to, {
+    actions: [{ label: "Review account", url: `${config.FRONTEND_URL}/settings` }],
+    details: [
+      { label: "Previous email", value: oldEmail },
+      { label: "New email", value: newEmail },
+      { label: "IP address", value: ipAddress },
+      { label: "Device", value: userAgent || "Unknown" },
+      { label: "Time", value: new Date().toLocaleString() },
+    ],
+    intro: "Your SecureLocker email address has been changed. If you did not make this change, secure your account immediately.",
+    subject: "SecureLocker email address changed",
+    title: "Email address changed",
   });
 }

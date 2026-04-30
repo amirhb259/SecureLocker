@@ -37,9 +37,22 @@ export type TwoFactorLoginResponse = {
   status: "2fa_required";
 };
 
-export type LoginResponse = AuthSession | SecurityReviewResponse | TwoFactorLoginResponse;
+export type NewDeviceApprovalResponse = {
+  code: "NEW_DEVICE_APPROVAL_REQUIRED";
+  message: string;
+  status: "new_device_approval_required";
+};
 
-export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:4100/api";
+export type LoginResponse = AuthSession | NewDeviceApprovalResponse | SecurityReviewResponse | TwoFactorLoginResponse;
+
+function resolveApiBaseUrl() {
+  const configured = import.meta.env.VITE_API_BASE_URL;
+  if (configured) return configured.replace(/\/+$/, "");
+  if (import.meta.env.DEV) return "http://127.0.0.1:4100/api";
+  throw new Error("VITE_API_BASE_URL is required for production builds.");
+}
+
+export const apiBaseUrl = resolveApiBaseUrl();
 
 type ApiErrorBody = {
   code?: string;
@@ -67,6 +80,8 @@ export class ApiError extends Error {
 
 function userMessageFor(code: string | undefined, fallback: string | undefined) {
   switch (code) {
+    case "ACCOUNT_DEACTIVATED":
+      return "This account has been deactivated. Use reactivation to restore access.";
     case "ACCOUNT_EXISTS":
       return "Email already in use.";
     case "ACCOUNT_LOCKED":
@@ -77,6 +92,8 @@ function userMessageFor(code: string | undefined, fallback: string | undefined) 
       return "Verify your email before signing in.";
     case "INVALID_CREDENTIALS":
       return "Invalid credentials.";
+    case "NEW_DEVICE_APPROVAL_REQUIRED":
+      return "Approve this device from your email before continuing.";
     case "INVALID_RECOVERY_TOKEN":
       return "Invalid or expired recovery token.";
     case "INVALID_RESET_TOKEN":
@@ -118,7 +135,7 @@ async function request<T>(path: string, body: unknown): Promise<T> {
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {
       body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
       method: "POST",
     });
   } catch {
@@ -138,7 +155,7 @@ async function getRequest<T>(path: string): Promise<T> {
   let response: Response;
 
   try {
-    response = await fetch(`${apiBaseUrl}${path}`);
+    response = await fetch(`${apiBaseUrl}${path}`, { headers: buildJsonHeaders() });
   } catch {
     throw new ApiError("SecureLocker service is unreachable.", 0, "SERVICE_UNAVAILABLE");
   }
@@ -175,7 +192,40 @@ export const authApi = {
     request<{ message: string }>("/2fa/login/send-code", { sessionToken }),
   verify2faLoginCode: (input: { code: string; sessionToken: string }) =>
     request<AuthSession>("/2fa/login/verify-code", input),
+  sendAccountDisableCode: () => authenticatedRequest<{ message: string }>("/account/disable/send-code", { method: "POST" }),
+  disableAccount: (input: { password: string; code: string }) =>
+    authenticatedRequest<{ message: string }>("/account/disable", { method: "POST", body: JSON.stringify(input) }),
+  reactivateAccount: (input: { email: string; answers: string[] }) =>
+    request<{ message: string }>("/account/reactivate", input),
+  sendEmailChangeCurrentCode: () => authenticatedRequest<{ message: string }>("/account/email-change/send-current-code", { method: "POST" }),
+  verifyEmailChangeCurrentCode: (input: { code: string }) =>
+    authenticatedRequest<{ message: string }>("/account/email-change/verify-current", { method: "POST", body: JSON.stringify(input) }),
+  submitEmailChangeNewEmail: (input: { newEmail: string }) =>
+    authenticatedRequest<{ message: string }>("/account/email-change/submit-new", { method: "POST", body: JSON.stringify(input) }),
+  completeEmailChange: (input: { newEmail: string; code: string; password: string }) =>
+    authenticatedRequest<{ message: string }>("/account/email-change/complete", { method: "POST", body: JSON.stringify(input) }),
 };
+
+function buildDeviceFingerprint() {
+  if (typeof window === "undefined") return "server";
+  const screenInfo = window.screen
+    ? `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`
+    : "screen-unknown";
+
+  return [
+    navigator.userAgent,
+    navigator.language,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    screenInfo,
+  ].join("|");
+}
+
+function buildJsonHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "X-SecureLocker-Device-Fingerprint": buildDeviceFingerprint(),
+  };
+}
 
 const sessionStorageKey = "securelocker.session";
 export const sessionChangedEvent = "securelocker.session.changed";
@@ -213,7 +263,7 @@ export async function authenticatedRequest<T>(path: string, options: RequestInit
     response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       headers: {
-        "Content-Type": "application/json",
+        ...buildJsonHeaders(),
         Authorization: `Bearer ${session.accessToken}`,
         ...(options.headers ?? {}),
       },

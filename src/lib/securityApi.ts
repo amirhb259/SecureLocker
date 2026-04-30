@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "./authApi";
+import { apiBaseUrl, getStoredSession } from "./authApi";
 
 export interface SecurityScore {
   total: number;
@@ -15,11 +15,9 @@ export interface SecurityScore {
 export interface TrustedDevice {
   id: string;
   deviceName: string;
-  ipAddress: string;
-  userAgent: string;
-  isTrusted: boolean;
-  lastUsedAt: string;
-  createdAt: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  trustedAt: string;
 }
 
 export interface SecurityLog {
@@ -39,22 +37,28 @@ export interface SecuritySettings {
   accountLockProtection: boolean;
   maxFailedAttempts: number;
   lockDurationMinutes: number;
+  emergencyShortcutEnabled: boolean;
 }
 
 export interface LoginApprovalResponse {
   success: boolean;
-  sessionToken?: string;
+  message?: string;
   error?: string;
 }
 
 // Security API functions
+function authHeaders() {
+  const session = getStoredSession();
+  return {
+    "Authorization": session ? `Bearer ${session.accessToken}` : "",
+    "Content-Type": "application/json",
+  };
+}
+
 export async function getSecurityScore(): Promise<SecurityScore> {
   const response = await fetch(`${apiBaseUrl}/security/score`, {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
   });
 
   if (!response.ok) {
@@ -67,10 +71,7 @@ export async function getSecurityScore(): Promise<SecurityScore> {
 export async function getTrustedDevices(): Promise<TrustedDevice[]> {
   const response = await fetch(`${apiBaseUrl}/devices`, {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
   });
 
   if (!response.ok) {
@@ -84,10 +85,7 @@ export async function getTrustedDevices(): Promise<TrustedDevice[]> {
 export async function removeTrustedDevice(deviceId: string): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/devices/${deviceId}`, {
     method: "DELETE",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
   });
 
   if (!response.ok) {
@@ -98,10 +96,7 @@ export async function removeTrustedDevice(deviceId: string): Promise<void> {
 export async function getSecurityLogs(limit: number = 50, offset: number = 0): Promise<SecurityLog[]> {
   const response = await fetch(`${apiBaseUrl}/security/logs?limit=${limit}&offset=${offset}`, {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
   });
 
   if (!response.ok) {
@@ -115,10 +110,7 @@ export async function getSecurityLogs(limit: number = 50, offset: number = 0): P
 export async function getSecuritySettings(): Promise<SecuritySettings> {
   const response = await fetch(`${apiBaseUrl}/security/settings`, {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
   });
 
   if (!response.ok) {
@@ -131,15 +123,37 @@ export async function getSecuritySettings(): Promise<SecuritySettings> {
 export async function updateSecuritySettings(settings: Partial<SecuritySettings>): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/security/settings`, {
     method: "PUT",
-    headers: {
-      "Authorization": `Bearer ${localStorage.getItem("authToken")}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(),
     body: JSON.stringify(settings),
   });
 
   if (!response.ok) {
     throw new Error("Failed to update security settings");
+  }
+}
+
+export async function getAccountSecurityStatus(): Promise<{ emergencyShortcutEnabled: boolean }> {
+  const response = await fetch(`${apiBaseUrl}/account/security-status`, {
+    method: "GET",
+    headers: authHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch account security status");
+  }
+
+  return response.json();
+}
+
+export async function updateAccountSecurityStatus(settings: { emergencyShortcutEnabled: boolean }): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/account/security-status`, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify(settings),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to update account security status");
   }
 }
 

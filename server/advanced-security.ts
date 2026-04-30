@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import { prisma } from "./prisma.js";
 import { SecurityLogAction, SecurityLogSeverity } from "@prisma/client";
-import { hashToken, addMinutes, addDays } from "./security.js";
+import { addDays, addMinutes, hashToken } from "./security.js";
 import { sendLoginAlertEmail, sendLoginApprovalEmail, sendSuspiciousLoginEmail } from "./email.js";
+import { config } from "./config.js";
 
 export interface DeviceInfo {
+  deviceFingerprint?: string;
   userAgent: string;
   ipAddress: string;
   deviceName?: string;
@@ -37,11 +39,28 @@ export interface SecurityScore {
   };
 }
 
-// Device fingerprinting
-export function generateDeviceFingerprint(userAgent: string, ipAddress: string): string {
-  const hash = crypto.createHash('sha256');
-  hash.update(`${userAgent}:${ipAddress}`);
-  return hash.digest('hex').substring(0, 32);
+export function hashDeviceValue(label: string, value: string): string {
+  return crypto
+    .createHmac("sha256", config.AUTH_TOKEN_PEPPER)
+    .update(`${label}:${value.trim().toLowerCase()}`)
+    .digest("hex");
+}
+
+export function generateDeviceFingerprint(userAgent: string, ipAddress: string, clientFingerprint?: string): string {
+  const stableClientValue = clientFingerprint?.trim() || `${userAgent}:${ipAddress}`;
+  return crypto.createHash("sha256").update(stableClientValue).digest("hex");
+}
+
+function deviceHashes(deviceInfo: DeviceInfo) {
+  const userAgent = deviceInfo.userAgent || "unknown";
+  const ipAddress = deviceInfo.ipAddress || "unknown";
+  const deviceFingerprint = generateDeviceFingerprint(userAgent, ipAddress, deviceInfo.deviceFingerprint);
+
+  return {
+    deviceFingerprintHash: hashDeviceValue("device-fingerprint", deviceFingerprint),
+    ipHash: hashDeviceValue("ip", ipAddress),
+    userAgentHash: hashDeviceValue("user-agent", userAgent),
+  };
 }
 
 // Get or create user security settings
@@ -60,20 +79,22 @@ export async function getSecuritySettings(userId: string) {
 }
 
 // Check if device is trusted
-export async function isDeviceTrusted(userId: string, deviceFingerprint: string, ipAddress: string): Promise<boolean> {
+export async function isDeviceTrusted(userId: string, deviceInfo: DeviceInfo): Promise<boolean> {
+  const hashes = deviceHashes(deviceInfo);
   const trustedDevice = await prisma.trustedDevice.findFirst({
     where: {
-      userId,
-      deviceFingerprint,
-      isTrusted: true
+      deviceFingerprintHash: hashes.deviceFingerprintHash,
+      ipHash: hashes.ipHash,
+      revokedAt: null,
+      userAgentHash: hashes.userAgentHash,
+      userId
     }
   });
 
   if (trustedDevice) {
-    // Update last used
     await prisma.trustedDevice.update({
       where: { id: trustedDevice.id },
-      data: { lastUsedAt: new Date() }
+      data: { lastSeenAt: new Date() }
     });
     return true;
   }
@@ -83,7 +104,7 @@ export async function isDeviceTrusted(userId: string, deviceFingerprint: string,
 
 // Trust a device
 export async function trustDevice(userId: string, deviceInfo: DeviceInfo): Promise<void> {
-  const deviceFingerprint = generateDeviceFingerprint(deviceInfo.userAgent, deviceInfo.ipAddress);
+  const hashes = deviceHashes(deviceInfo);
   
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -94,34 +115,35 @@ export async function trustDevice(userId: string, deviceInfo: DeviceInfo): Promi
 
   await prisma.trustedDevice.upsert({
     where: {
-      userId_deviceFingerprint: {
+      userId_deviceFingerprintHash_ipHash: {
+        deviceFingerprintHash: hashes.deviceFingerprintHash,
+        ipHash: hashes.ipHash,
         userId,
-        deviceFingerprint
       }
     },
     update: {
       deviceName: deviceInfo.deviceName || 'Unknown Device',
-      ipAddress: deviceInfo.ipAddress,
-      userAgent: deviceInfo.userAgent,
-      isTrusted: true,
-      lastUsedAt: new Date()
+      lastSeenAt: new Date(),
+      revokedAt: null,
+      trustedAt: new Date(),
+      userAgentHash: hashes.userAgentHash,
     },
     create: {
-      userId,
+      deviceFingerprintHash: hashes.deviceFingerprintHash,
       deviceName: deviceInfo.deviceName || 'Unknown Device',
-      ipAddress: deviceInfo.ipAddress,
-      userAgent: deviceInfo.userAgent,
-      deviceFingerprint,
-      isTrusted: true
+      ipHash: hashes.ipHash,
+      userAgentHash: hashes.userAgentHash,
+      userId,
     }
   });
 
   // Send login alert if enabled (only for new devices)
   const existingDevice = await prisma.trustedDevice.findFirst({
     where: {
+      deviceFingerprintHash: hashes.deviceFingerprintHash,
+      ipHash: hashes.ipHash,
       userId,
-      deviceFingerprint,
-      createdAt: {
+      firstSeenAt: {
         lt: new Date(Date.now() - 1000) // Check if device was just created
       }
     }
@@ -151,19 +173,20 @@ export async function removeTrustedDevice(userId: string, deviceId: string): Pro
   });
 
   if (device) {
-    await prisma.trustedDevice.delete({
-      where: { id: deviceId }
+    await prisma.trustedDevice.update({
+      data: { revokedAt: new Date() },
+      where: { id: deviceId },
     });
 
-    await logSecurityEvent(userId, SecurityLogAction.DEVICE_UNTRUSTED, device.ipAddress, device.userAgent, `Device ${device.deviceName} removed from trusted devices`);
+    await logSecurityEvent(userId, SecurityLogAction.DEVICE_UNTRUSTED, "minimized", undefined, `Device ${device.deviceName} revoked`);
   }
 }
 
 // Get all trusted devices for user
 export async function getTrustedDevices(userId: string) {
   return prisma.trustedDevice.findMany({
-    where: { userId },
-    orderBy: { lastUsedAt: 'desc' }
+    where: { revokedAt: null, userId },
+    orderBy: { lastSeenAt: 'desc' }
   });
 }
 
@@ -293,7 +316,7 @@ export async function trackFailedLogin(email: string, ipAddress: string, userAge
 
   // Create failed attempt record
   await prisma.loginAttempt.create({
-    data: { email, ipAddress, success: false, reason: "Invalid credentials" }
+    data: { email, ipAddress, success: false, reason: "bad_password" }
   });
 
   // Send login alert if threshold reached and alerts enabled
@@ -329,43 +352,59 @@ export async function performSecurityCheck(context: LoginContext): Promise<Secur
     };
   }
 
-  const deviceFingerprint = generateDeviceFingerprint(deviceInfo.userAgent, deviceInfo.ipAddress);
-  const isTrusted = await isDeviceTrusted(userId, deviceFingerprint, deviceInfo.ipAddress);
+  const hashes = deviceHashes(deviceInfo);
+  const isTrusted = await isDeviceTrusted(userId, deviceInfo);
 
   if (isTrusted) {
-    // Trusted device - allow login
-    await logSecurityEvent(userId, SecurityLogAction.LOGIN_SUCCESS, deviceInfo.ipAddress, deviceInfo.userAgent, 'Login from trusted device');
-    
-    // Send login alert if enabled
-    if (settings.loginAlerts) {
-      await sendLoginAlertEmail(email, "successful_login", deviceInfo, email);
-    }
-    
     return { allowed: true };
   }
 
   // New or untrusted device
   if (settings.suspiciousLoginDetection) {
+    const existingApproval = await prisma.pendingLoginApproval.findFirst({
+      orderBy: { createdAt: "desc" },
+      where: {
+        approvedAt: null,
+        deviceFingerprintHash: hashes.deviceFingerprintHash,
+        expiresAt: { gt: new Date() },
+        ipHash: hashes.ipHash,
+        rejectedAt: null,
+        userId,
+      },
+    });
+
+    if (existingApproval) {
+      await logSecurityEvent(userId, SecurityLogAction.NEW_DEVICE_DETECTED, deviceInfo.ipAddress, deviceInfo.userAgent, "New device login blocked; approval already pending", SecurityLogSeverity.WARNING);
+      return {
+        allowed: false,
+        requiresApproval: true,
+        isNewDevice: true,
+        reason: 'New device detected - approval required'
+      };
+    }
+
     // Create pending approval
     const approvalToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = hashToken(approvalToken);
     
     await prisma.pendingLoginApproval.create({
       data: {
-        userId,
-        tokenHash,
-        ipAddress: deviceInfo.ipAddress,
-        userAgent: deviceInfo.userAgent,
-        deviceFingerprint,
+        deviceFingerprintHash: hashes.deviceFingerprintHash,
         deviceName: deviceInfo.deviceName || 'Unknown Device',
-        expiresAt: addMinutes(new Date(), 15) // 15 minutes approval window
+        expiresAt: addMinutes(new Date(), 15), // 15 minutes approval window
+        ipHash: hashes.ipHash,
+        tokenHash,
+        userAgentHash: hashes.userAgentHash,
+        userId,
       }
     });
 
     // Send approval email
     await sendLoginApprovalEmail(email, deviceInfo, approvalToken);
 
+    await logSecurityEvent(userId, SecurityLogAction.NEW_DEVICE_DETECTED, deviceInfo.ipAddress, deviceInfo.userAgent, 'New device login blocked pending approval', SecurityLogSeverity.WARNING);
     await logSecurityEvent(userId, SecurityLogAction.LOGIN_APPROVAL_REQUESTED, deviceInfo.ipAddress, deviceInfo.userAgent, 'New device login approval requested');
+    await logSecurityEvent(userId, SecurityLogAction.APPROVAL_EMAIL_SENT, deviceInfo.ipAddress, deviceInfo.userAgent, 'New device approval email sent');
 
     return {
       allowed: false,
@@ -414,30 +453,33 @@ export async function approveLogin(approvalToken: string): Promise<{ success: bo
     data: { approvedAt: new Date() }
   });
 
-  // Trust the device
-  await trustDevice(pending.userId, {
-    userAgent: pending.userAgent!,
-    ipAddress: pending.ipAddress,
-    deviceName: pending.deviceName
-  });
-
-  // Create session
-  const sessionToken = crypto.randomBytes(32).toString('base64url');
-  const sessionTokenHash = hashToken(sessionToken);
-  
-  await prisma.session.create({
-    data: {
+  await prisma.trustedDevice.upsert({
+    where: {
+      userId_deviceFingerprintHash_ipHash: {
+        deviceFingerprintHash: pending.deviceFingerprintHash,
+        ipHash: pending.ipHash,
+        userId: pending.userId,
+      },
+    },
+    update: {
+      deviceName: pending.deviceName,
+      lastSeenAt: new Date(),
+      revokedAt: null,
+      trustedAt: new Date(),
+      userAgentHash: pending.userAgentHash,
+    },
+    create: {
+      deviceFingerprintHash: pending.deviceFingerprintHash,
+      deviceName: pending.deviceName,
+      ipHash: pending.ipHash,
+      userAgentHash: pending.userAgentHash,
       userId: pending.userId,
-      tokenHash: sessionTokenHash,
-      expiresAt: addDays(new Date(), 7),
-      ipAddress: pending.ipAddress,
-      userAgent: pending.userAgent
-    }
+    },
   });
 
-  await logSecurityEvent(pending.userId, SecurityLogAction.LOGIN_APPROVED, pending.ipAddress, pending.userAgent, 'Login approved via email');
+  await logSecurityEvent(pending.userId, SecurityLogAction.LOGIN_APPROVED, "minimized", undefined, 'Device approved via email');
 
-  return { success: true, sessionToken };
+  return { success: true };
 }
 
 // Reject pending login
@@ -465,7 +507,7 @@ export async function rejectLogin(approvalToken: string): Promise<{ success: boo
     data: { rejectedAt: new Date() }
   });
 
-  await logSecurityEvent(pending.userId, SecurityLogAction.LOGIN_REJECTED, pending.ipAddress, pending.userAgent, 'Login rejected via email');
+  await logSecurityEvent(pending.userId, SecurityLogAction.LOGIN_REJECTED, "minimized", undefined, 'Login rejected via email');
 
   return { success: true };
 }
@@ -476,7 +518,7 @@ export async function calculateSecurityScore(userId: string): Promise<SecuritySc
     where: { id: userId },
     include: {
       vault: true,
-      trustedDevices: true,
+      trustedDevices: { where: { revokedAt: null } },
       securityLogs: {
         where: {
           action: SecurityLogAction.LOGIN_FAILED,

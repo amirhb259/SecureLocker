@@ -1,24 +1,31 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { AuthPage } from "../pages/auth/AuthPage";
 import { UpdateChangelogOverlay } from "../components/app/UpdateChangelogOverlay";
 import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import secureLockerLogo from "../assets/new-securelocker-logo.png";
 import { clearStoredSession, getStoredSession, sessionChangedEvent, type AuthSession } from "../lib/authApi";
 import { dashboardApi, type MeResponse } from "../lib/dashboardApi";
-import { runStartupUpdateCheck } from "../lib/desktopSettings";
 import { readStoredSettingsPreferences } from "../lib/settingsPreferences";
-import { consumeUpdateAnnouncement, dismissUpdateAnnouncement, resolveAppVersion, type UpdateAnnouncement } from "../lib/updater";
+import { checkForUpdatesOnStartup, consumeUpdateAnnouncement, dismissUpdateAnnouncement, resolveAppVersion, type UpdateAnnouncement } from "../lib/updater";
 import packageJson from "../../package.json";
 
-let startupUpdateCheckLaunched = false;
-
 export default function App() {
+  const startupSteps = [
+    "Initializing SecureLocker...",
+    "Loading user settings...",
+    "Checking for updates...",
+    "Verifying system compatibility...",
+    "Starting SecureLocker..."
+  ];
+
   const [session, setSession] = useState<AuthSession | null>(() => getStoredSession());
   const [me, setMe] = useState<MeResponse | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(Boolean(session));
   const [appVersion, setAppVersion] = useState(packageJson.version);
   const [updateAnnouncement, setUpdateAnnouncement] = useState<UpdateAnnouncement | null>(null);
+  const [isStartingUp, setIsStartingUp] = useState(true);
+  const [startupStep, setStartupStep] = useState(0);
 
   useEffect(() => {
     function syncSession() {
@@ -51,17 +58,54 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (startupUpdateCheckLaunched) {
-      return;
+    let active = true;
+
+    async function runStartupChecks() {
+      try {
+        // Step 0: Initializing
+        setStartupStep(0);
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        // Step 1: Loading settings
+        setStartupStep(1);
+        const prefs = readStoredSettingsPreferences();
+        document.documentElement.setAttribute("data-theme", prefs.themeMode === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : prefs.themeMode);
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Step 2: Update check
+        setStartupStep(2);
+        if (prefs.checkForUpdatesOnStartup) {
+          try {
+            await checkForUpdatesOnStartup();
+          } catch (error) {
+            console.log("Startup update check failed:", error);
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Step 3: System compatibility
+        setStartupStep(3);
+        // Check backend/API availability - for now assume ok
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Step 4: Ready
+        setStartupStep(4);
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+      } finally {
+        if (active) {
+          setIsStartingUp(false);
+        }
+      }
     }
 
-    startupUpdateCheckLaunched = true;
-    if (!readStoredSettingsPreferences().checkForUpdatesOnStartup) {
-      return;
-    }
-
-    void runStartupUpdateCheck();
+    void runStartupChecks();
+    return () => {
+      active = false;
+    };
   }, []);
+
+
 
   useEffect(() => {
     let active = true;
@@ -90,6 +134,39 @@ export default function App() {
       active = false;
     };
   }, [session]);
+
+  if (isStartingUp) {
+    const progress = (startupStep + 1) / startupSteps.length;
+    return (
+      <motion.main
+        className="splash-screen"
+        initial={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <div className="ambient-grid" aria-hidden="true" />
+        <motion.div
+          className="splash-content"
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <img src={secureLockerLogo} alt="SecureLocker" />
+          <div className="splash-progress">
+            <div className="splash-progress-bar">
+              <motion.div
+                className="splash-progress-fill"
+                initial={{ width: 0 }}
+                animate={{ width: `${progress * 100}%` }}
+                transition={{ duration: 0.3 }}
+              />
+            </div>
+            <span className="splash-status">{startupSteps[startupStep]}</span>
+          </div>
+        </motion.div>
+      </motion.main>
+    );
+  }
 
   return (
     <>

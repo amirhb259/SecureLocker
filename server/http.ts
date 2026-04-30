@@ -1,6 +1,7 @@
 import type { Response } from "express";
 
 export type ApiErrorCode =
+  | "ACCOUNT_DEACTIVATED"
   | "ACCOUNT_EXISTS"
   | "ACCOUNT_LOCKED"
   | "APPROVAL_FAILED"
@@ -16,6 +17,7 @@ export type ApiErrorCode =
   | "INVALID_SESSION"
   | "INVALID_SETUP_TOKEN"
   | "INVALID_TOKEN"
+  | "NEW_DEVICE_APPROVAL_REQUIRED"
   | "NOT_FOUND"
   | "RECOVERY_FAILED"
   | "RECOVERY_LOCKED"

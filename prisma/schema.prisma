@@ -19,6 +19,10 @@ model User {
   updatedAt                   DateTime                     @updatedAt @map("updated_at")
   lockedAt                    DateTime?                    @map("locked_at")
   lockedReason                String?                      @map("locked_reason") @db.VarChar(128)
+  emergencyShortcutEnabled    Boolean                      @default(false) @map("emergency_shortcut_enabled")
+  emergencyShortcutHash       String?                      @map("emergency_shortcut_hash")
+  emergencyShortcutCreatedAt  DateTime?                    @map("emergency_shortcut_created_at")
+  emergencyShortcutUpdatedAt  DateTime?                    @map("emergency_shortcut_updated_at")
   accountLockEvents           AccountLockEvent[]
   accountRecoveryTokens       AccountRecoveryToken[]
   auditLogs                   AuditLog[]
@@ -43,6 +47,7 @@ model User {
   trustedDevices              TrustedDevice[]
   pendingLoginApprovals       PendingLoginApproval[]
   securityLogs                SecurityLog[]
+  emergencyShortcutSetupTokens EmergencyShortcutSetupToken[]
 
   @@map("users")
 }
@@ -302,6 +307,20 @@ model SecurityQuestionSetupToken {
   @@map("security_question_setup_tokens")
 }
 
+model EmergencyShortcutSetupToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("emergency_shortcut_setup_tokens")
+}
+
 model AccountRecoveryToken {
   id        String            @id @default(uuid()) @db.Uuid
   userId    String            @map("user_id") @db.Uuid
@@ -372,6 +391,7 @@ enum UserAccountStatus {
   LOCKED
   SCHEDULED_DELETION
   DEACTIVATED
+  EMERGENCY_LOCKED
 }
 
 model Email2faCode {
@@ -437,39 +457,42 @@ model SecuritySettings {
 }
 
 model TrustedDevice {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  deviceName  String   @map("device_name") @db.VarChar(128)
-  ipAddress   String   @map("ip_address") @db.VarChar(64)
-  userAgent   String   @map("user_agent") @db.VarChar(512)
-  deviceFingerprint String @map("device_fingerprint") @db.VarChar(128)
-  isTrusted   Boolean  @default(true) @map("is_trusted")
-  lastUsedAt  DateTime @default(now()) @map("last_used_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  deviceName            String    @map("device_name") @db.VarChar(128)
+  ipHash                String    @map("ip_hash") @db.VarChar(128)
+  userAgentHash         String    @map("user_agent_hash") @db.VarChar(128)
+  deviceFingerprintHash String    @map("device_fingerprint_hash") @db.VarChar(128)
+  firstSeenAt           DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt            DateTime  @default(now()) @map("last_seen_at")
+  trustedAt             DateTime  @default(now()) @map("trusted_at")
+  revokedAt             DateTime? @map("revoked_at")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, deviceFingerprint])
+  @@unique([userId, deviceFingerprintHash, ipHash])
   @@index([userId])
-  @@index([deviceFingerprint])
+  @@index([deviceFingerprintHash])
+  @@index([ipHash])
   @@map("trusted_devices")
 }
 
 model PendingLoginApproval {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  tokenHash   String   @unique @map("token_hash") @db.VarChar(128)
-  ipAddress   String   @map("ip_address") @db.VarChar(64)
-  userAgent   String   @map("user_agent") @db.VarChar(512)
-  deviceFingerprint String @map("device_fingerprint") @db.VarChar(128)
-  deviceName  String   @map("device_name") @db.VarChar(128)
-  expiresAt   DateTime @map("expires_at")
-  approvedAt  DateTime? @map("approved_at")
-  rejectedAt  DateTime? @map("rejected_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  tokenHash             String    @unique @map("token_hash") @db.VarChar(128)
+  ipHash                String    @map("ip_hash") @db.VarChar(128)
+  userAgentHash         String    @map("user_agent_hash") @db.VarChar(128)
+  deviceFingerprintHash String    @map("device_fingerprint_hash") @db.VarChar(128)
+  deviceName            String    @map("device_name") @db.VarChar(128)
+  expiresAt             DateTime  @map("expires_at")
+  approvedAt            DateTime? @map("approved_at")
+  rejectedAt            DateTime? @map("rejected_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([userId, deviceFingerprintHash, ipHash])
   @@map("pending_login_approvals")
 }
 
@@ -493,9 +516,11 @@ model SecurityLog {
 enum SecurityLogAction {
   LOGIN_SUCCESS
   LOGIN_FAILED
+  NEW_DEVICE_DETECTED
   NEW_DEVICE_LOGIN
   SUSPICIOUS_LOGIN_BLOCKED
   LOGIN_APPROVAL_REQUESTED
+  APPROVAL_EMAIL_SENT
   LOGIN_APPROVED
   LOGIN_REJECTED
   ACCOUNT_LOCKED
@@ -505,6 +530,12 @@ enum SecurityLogAction {
   TFA_DISABLED
   DEVICE_TRUSTED
   DEVICE_UNTRUSTED
+  EMERGENCY_SHORTCUT_SETUP_REQUESTED
+  EMERGENCY_SHORTCUT_ENABLED
+  EMERGENCY_SHORTCUT_TRIGGERED
+  EMERGENCY_LOCK_UNLOCK_ATTEMPT
+  EMERGENCY_LOCK_UNLOCK_SUCCESS
+  EMERGENCY_SHORTCUT_DISABLED
 }
 
 enum SecurityLogSeverity {

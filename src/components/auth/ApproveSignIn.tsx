@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "../ui/Button";
+import { approveLogin } from "../../lib/securityApi";
 
 type ApproveSignInProps = {
   onBack: () => void;
@@ -19,17 +20,14 @@ export function ApproveSignIn({ onBack, token }: ApproveSignInProps) {
       return;
     }
 
-    fetch(`/api/security/trust-ip?token=${encodeURIComponent(token)}&json=true`, {
-      method: "GET",
-    })
-      .then((res) => res.json())
+    approveLogin(token)
       .then((data) => {
         if (data.success) {
           setStatus("success");
-          setMessage(data.message);
+          setMessage(data.message ?? "This device is approved. Return to login to continue.");
         } else {
           setStatus("error");
-          setMessage(data.message);
+          setMessage(data.error ?? "Failed to approve sign-in");
         }
       })
       .catch(() => {

@@ -20,15 +20,15 @@ const backendDependencies = [
   "zod",
 ];
 
-if (!existsSync(join(rootDir, "build", "server", "index.js"))) {
-  throw new Error("Missing build/server/index.js. Run npm run build:api before preparing the desktop backend.");
+if (!existsSync(join(rootDir, "dist", "server", "index.js"))) {
+  throw new Error("Missing dist/server/index.js. Run npm run build:api before preparing the desktop backend.");
 }
 
 rmSync(backendDir, { force: true, recursive: true });
 mkdirSync(backendDir, { recursive: true });
 
 copyFileSync(process.execPath, join(backendDir, "node.exe"));
-cpSync(join(rootDir, "build", "server"), join(backendDir, "server"), { recursive: true });
+cpSync(join(rootDir, "dist", "server"), join(backendDir, "server"), { recursive: true });
 cpSync(join(rootDir, "prisma"), join(backendDir, "prisma"), { recursive: true });
 
 if (existsSync(join(rootDir, ".env"))) {
