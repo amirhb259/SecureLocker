@@ -7,10 +7,10 @@ const isNetlifyRuntime = process.env.NETLIFY === "true" || Boolean(process.env.A
 const nodeEnv = process.env.NODE_ENV ?? (isNetlifyRuntime ? "production" : "development");
 const envFile = resolve(process.cwd(), `.env.${nodeEnv}`);
 
+loadDotenv();
+
 if (existsSync(envFile)) {
-  loadDotenv({ path: envFile });
-} else {
-  loadDotenv();
+  loadDotenv({ override: true, path: envFile });
 }
 
 const loopbackIp = () => ["127", "0", "0", "1"].join(".");
@@ -23,7 +23,12 @@ const developmentDefaults =
     ? {}
     : {
         API_BASE_URL: localApiUrl(),
-        CORS_ORIGIN: [localFrontendUrl(), `http://tauri.${loopbackName()}`, `tauri://${loopbackName()}`].join(","),
+        CORS_ORIGIN: [
+          localFrontendUrl(),
+          `http://${loopbackName()}:1420`,
+          `http://tauri.${loopbackName()}`,
+          `tauri://${loopbackName()}`,
+        ].join(","),
         FRONTEND_URL: localFrontendUrl(),
         PORT: "4100",
         SMTP_PORT: "587",
