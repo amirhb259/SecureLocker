@@ -1,3 +1,4 @@
+import type { Handler, HandlerEvent, HandlerResponse } from "@netlify/functions";
 import serverless from "serverless-http";
 import { app } from "../../server/index.js";
 
@@ -12,5 +13,9 @@ function normalizePath(path = "/") {
   return path;
 }
 
-export const handler = (event: any, context: any) =>
-  expressHandler({ ...event, path: normalizePath(event.path) }, context);
+function normalizeEvent(event: HandlerEvent): HandlerEvent {
+  return { ...event, path: normalizePath(event.path) };
+}
+
+export const handler: Handler = (event, context) =>
+  expressHandler(normalizeEvent(event), context) as Promise<HandlerResponse>;

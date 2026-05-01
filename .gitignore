@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 build
+.netlify
+deploy-*.zip
 .env
 .env.local
 dist-ssr

@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 
-const nodeEnv = process.env.NODE_ENV ?? "development";
+const isNetlifyRuntime = process.env.NETLIFY === "true" || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+const nodeEnv = process.env.NODE_ENV ?? (isNetlifyRuntime ? "production" : "development");
 const envFile = resolve(process.cwd(), `.env.${nodeEnv}`);
 
 if (existsSync(envFile)) {

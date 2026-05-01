@@ -2,9 +2,9 @@
 
 SecureLocker runs without a separate paid backend host. The React frontend and Express API are deployed together on Netlify Free:
 
-- Frontend: `https://securelocker.netlify.app`
-- API: `https://securelocker.netlify.app/api`
-- Health check: `https://securelocker.netlify.app/api/health`
+- Frontend: `https://securelocker1.netlify.app`
+- API: `https://securelocker1.netlify.app/api`
+- Health check: `https://securelocker1.netlify.app/api/health`
 - Database: Supabase PostgreSQL Free
 
 ## Netlify
@@ -34,11 +34,10 @@ The API is exposed by `netlify/functions/api.ts`. `netlify.toml` rewrites `/api/
 Set these values in Netlify Environment Variables. Keep secrets in Netlify, not in Git:
 
 ```env
-NODE_ENV=production
-API_BASE_URL=https://securelocker.netlify.app
-FRONTEND_URL=https://securelocker.netlify.app
-CORS_ORIGIN=https://securelocker.netlify.app
-VITE_API_BASE_URL=https://securelocker.netlify.app/api
+API_BASE_URL=https://securelocker1.netlify.app
+FRONTEND_URL=https://securelocker1.netlify.app
+CORS_ORIGIN=https://securelocker1.netlify.app
+VITE_API_BASE_URL=https://securelocker1.netlify.app/api
 DATABASE_URL=postgresql://postgres:...@...supabase.com:5432/postgres?sslmode=require
 JWT_SECRET=<32+ character secret>
 AUTH_TOKEN_PEPPER=<24+ character secret>
@@ -55,12 +54,12 @@ SMTP_FROM=SecureLocker <production mailbox>
 After deploying, verify:
 
 ```bash
-curl https://securelocker.netlify.app/api/health
+curl https://securelocker1.netlify.app/api/health
 npm run build:netlify
 ```
 
 The production frontend and desktop build must use:
 
 ```env
-VITE_API_BASE_URL=https://securelocker.netlify.app/api
+VITE_API_BASE_URL=https://securelocker1.netlify.app/api
 ```

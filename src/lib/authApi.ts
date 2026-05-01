@@ -50,7 +50,7 @@ function resolveApiBaseUrl() {
   if (configured) return configured.replace(/\/+$/, "");
   if (import.meta.env.DEV) return "http://127.0.0.1:4100/api";
 
-  const productionApiBaseUrl = "https://securelocker.netlify.app/api";
+  const productionApiBaseUrl = "https://securelocker1.netlify.app/api";
   if (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol)) {
     return `${window.location.origin.replace(/\/+$/, "")}/api`;
   }

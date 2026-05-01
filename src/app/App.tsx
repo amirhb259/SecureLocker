@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AuthPage } from "../pages/auth/AuthPage";
 import { UpdateChangelogOverlay } from "../components/app/UpdateChangelogOverlay";
-import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import secureLockerLogo from "../assets/new-securelocker-logo.png";
 import { clearStoredSession, getStoredSession, sessionChangedEvent, type AuthSession } from "../lib/authApi";
 import { dashboardApi, type MeResponse } from "../lib/dashboardApi";
 import { readStoredSettingsPreferences } from "../lib/settingsPreferences";
 import { checkForUpdatesOnStartup, consumeUpdateAnnouncement, dismissUpdateAnnouncement, resolveAppVersion, type UpdateAnnouncement } from "../lib/updater";
 import packageJson from "../../package.json";
+
+const AuthPage = lazy(() => import("../pages/auth/AuthPage").then((module) => ({ default: module.AuthPage })));
+const DashboardPage = lazy(() => import("../pages/dashboard/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 
 export default function App() {
   const startupSteps = [
@@ -170,19 +171,15 @@ export default function App() {
 
   return (
     <>
-      {isCheckingSession ? (
-        <main className="auth-page">
-          <div className="ambient-grid" aria-hidden="true" />
-          <div className="session-boot">
-            <img src={secureLockerLogo} alt="SecureLocker" />
-            <span>Securing dashboard session...</span>
-          </div>
-        </main>
-      ) : !session || !me ? (
-        <AuthPage />
-      ) : (
-        <DashboardPage initialMe={me} onSignOut={clearStoredSession} />
-      )}
+      <Suspense fallback={<SessionBoot />}>
+        {isCheckingSession ? (
+          <SessionBoot />
+        ) : !session || !me ? (
+          <AuthPage />
+        ) : (
+          <DashboardPage initialMe={me} onSignOut={clearStoredSession} />
+        )}
+      </Suspense>
       <AnimatePresence>
         {updateAnnouncement ? <UpdateChangelogOverlay announcement={updateAnnouncement} onClose={handleDismissUpdateAnnouncement} /> : null}
       </AnimatePresence>
@@ -195,4 +192,16 @@ export default function App() {
     dismissUpdateAnnouncement(updateAnnouncement.version);
     setUpdateAnnouncement(null);
   }
+}
+
+function SessionBoot() {
+  return (
+    <main className="auth-page">
+      <div className="ambient-grid" aria-hidden="true" />
+      <div className="session-boot">
+        <img src={secureLockerLogo} alt="SecureLocker" />
+        <span>Securing dashboard session...</span>
+      </div>
+    </main>
+  );
 }

@@ -6,6 +6,17 @@ const host = process.env.TAURI_DEV_HOST ?? "127.0.0.1";
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          icons: ["lucide-react"],
+          motion: ["motion"],
+          react: ["react", "react-dom"],
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
