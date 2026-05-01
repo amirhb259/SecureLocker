@@ -1,6 +1,32 @@
 [build]
-  command = "npm run build"
+  command = "npm run build:netlify"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "22"
+  NODE_ENV = "production"
+  API_BASE_URL = "https://securelocker.netlify.app"
+  FRONTEND_URL = "https://securelocker.netlify.app"
+  CORS_ORIGIN = "https://securelocker.netlify.app"
+  VITE_API_BASE_URL = "https://securelocker.netlify.app/api"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/api/health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

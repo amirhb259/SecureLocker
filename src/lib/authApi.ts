@@ -49,7 +49,13 @@ function resolveApiBaseUrl() {
   const configured = import.meta.env.VITE_API_BASE_URL;
   if (configured) return configured.replace(/\/+$/, "");
   if (import.meta.env.DEV) return "http://127.0.0.1:4100/api";
-  throw new Error("VITE_API_BASE_URL is required for production builds.");
+
+  const productionApiBaseUrl = "https://securelocker.netlify.app/api";
+  if (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol)) {
+    return `${window.location.origin.replace(/\/+$/, "")}/api`;
+  }
+
+  return productionApiBaseUrl;
 }
 
 export const apiBaseUrl = resolveApiBaseUrl();

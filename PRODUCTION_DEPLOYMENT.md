@@ -1,38 +1,66 @@
 # SecureLocker Production Deployment
 
-## Hosting
+SecureLocker runs without a separate paid backend host. The React frontend and Express API are deployed together on Netlify Free:
 
-- Frontend: Netlify, build command `npm run build`, publish directory `dist`.
-- API: Render free web service, build command `npm ci && npm run build:render`, start command `npm run prisma:deploy && npm start`.
-- Database: Supabase PostgreSQL. Use the Supabase pooled or direct PostgreSQL connection string in Render as `DATABASE_URL`; include `sslmode=require` when Supabase requires SSL.
-- Releases: GitHub Releases. The updater remains configured at `https://github.com/amirhb259/SecureLocker/releases/latest/download/latest.json`.
+- Frontend: `https://securelocker.netlify.app`
+- API: `https://securelocker.netlify.app/api`
+- Health check: `https://securelocker.netlify.app/api/health`
+- Database: Supabase PostgreSQL Free
 
-## Required Render Environment Variables
+## Netlify
 
-Set these in Render, not in source control:
+Build command:
 
-- `NODE_ENV=production`
-- `API_BASE_URL=https://<your-render-service>.onrender.com`
-- `FRONTEND_URL=https://<your-netlify-site>.netlify.app`
-- `CORS_ORIGIN=https://<your-netlify-site>.netlify.app`
-- `DATABASE_URL=<your-supabase-postgres-url>`
-- `JWT_SECRET`
-- `AUTH_TOKEN_PEPPER`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_SECURE`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM`
+```bash
+npm run build:netlify
+```
 
-## Required Netlify Environment Variable
+Publish directory:
 
-- `VITE_API_BASE_URL=https://<your-render-service>.onrender.com/api`
+```bash
+dist
+```
 
-## Checks
+Functions directory:
 
-- `npm run build:api`
-- `npm run build`
-- `rg "127\\.0\\.0\\.1|localhost" dist`
-- `curl https://<your-render-service>.onrender.com/health`
-- Run `npm run prisma:deploy` against Supabase before accepting users.
+```bash
+netlify/functions
+```
+
+The API is exposed by `netlify/functions/api.ts`. `netlify.toml` rewrites `/api/*` to that function, so browser and desktop builds use the same public API base URL.
+
+## Production Environment
+
+Set these values in Netlify Environment Variables. Keep secrets in Netlify, not in Git:
+
+```env
+NODE_ENV=production
+API_BASE_URL=https://securelocker.netlify.app
+FRONTEND_URL=https://securelocker.netlify.app
+CORS_ORIGIN=https://securelocker.netlify.app
+VITE_API_BASE_URL=https://securelocker.netlify.app/api
+DATABASE_URL=postgresql://postgres:...@...supabase.com:5432/postgres?sslmode=require
+JWT_SECRET=<32+ character secret>
+AUTH_TOKEN_PEPPER=<24+ character secret>
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=<production mailbox>
+SMTP_PASS=<production app password>
+SMTP_FROM=SecureLocker <production mailbox>
+```
+
+## Verification
+
+After deploying, verify:
+
+```bash
+curl https://securelocker.netlify.app/api/health
+npm run build:netlify
+```
+
+The production frontend and desktop build must use:
+
+```env
+VITE_API_BASE_URL=https://securelocker.netlify.app/api
+```

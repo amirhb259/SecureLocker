@@ -3357,6 +3357,10 @@ app.use((error: any, req: express.Request, res: express.Response, next: express.
   sendApiError(res, 500, "SERVER_ERROR", "SecureLocker encountered an unexpected error.");
 });
 
-app.listen(config.PORT, "0.0.0.0", () => {
-  console.log(`SecureLocker API listening on port ${config.PORT}`);
-});
+export { app };
+
+if (process.env.NETLIFY !== "true" && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  app.listen(config.PORT, "0.0.0.0", () => {
+    console.log(`SecureLocker API listening on port ${config.PORT}`);
+  });
+}
